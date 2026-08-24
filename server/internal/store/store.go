@@ -1,12 +1,15 @@
 package store
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -398,6 +401,128 @@ func removeEmptyParents(dir string, depth int) {
 	}
 }
 
+func rewritePackageManifest(packagePath string, manifestJSON []byte) error {
+	reader, err := zip.OpenReader(packagePath)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	temp, err := os.CreateTemp(filepath.Dir(packagePath), "package-*.zip")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	keepTemp := false
+	defer func() {
+		_ = temp.Close()
+		if !keepTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	writer := zip.NewWriter(temp)
+	replaced := false
+	for _, file := range reader.File {
+		name := filepath.ToSlash(file.Name)
+		if strings.EqualFold(name, "aishop.json") {
+			if err := writeZipFile(writer, file, manifestJSON); err != nil {
+				_ = writer.Close()
+				return err
+			}
+			replaced = true
+			continue
+		}
+		if err := copyZipFile(writer, file); err != nil {
+			_ = writer.Close()
+			return err
+		}
+	}
+	if !replaced {
+		header := &zip.FileHeader{Name: "aishop.json", Method: zip.Deflate}
+		header.SetMode(0644)
+		target, err := writer.CreateHeader(header)
+		if err != nil {
+			_ = writer.Close()
+			return err
+		}
+		if _, err := target.Write(manifestJSON); err != nil {
+			_ = writer.Close()
+			return err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, packagePath); err != nil {
+		return err
+	}
+	keepTemp = true
+	return nil
+}
+
+func copyZipFile(writer *zip.Writer, file *zip.File) error {
+	source, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
+	target, err := writer.CreateHeader(&file.FileHeader)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(target, source)
+	return err
+}
+
+func writeZipFile(writer *zip.Writer, file *zip.File, content []byte) error {
+	header := file.FileHeader
+	header.Method = zip.Deflate
+	header.SetMode(file.Mode())
+	target, err := writer.CreateHeader(&header)
+	if err != nil {
+		return err
+	}
+	_, err = target.Write(content)
+	return err
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
+}
+
+func computeSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 func submissionStatus(existingSoftware bool) string {
 	if existingSoftware {
 		return "Published"
@@ -467,8 +592,81 @@ func (s *Store) ToggleSubmissionStatus(ctx context.Context, userID int64, softwa
 }
 
 func (s *Store) UpdateSoftwareInfo(ctx context.Context, userID int64, softwareID, name, summary, category string) error {
-	_, err := s.db.ExecContext(ctx, `update software set name=$1, summary=$2, category=$3 where id=$4 and owner_user_id=$5 and deleted_at is null`, name, summary, categoryOrDefault(category), softwareID, userID)
-	return err
+	name = strings.TrimSpace(name)
+	summary = strings.TrimSpace(summary)
+	category = categoryOrDefault(category)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var versionID int64
+	var manifestRaw []byte
+	var packagePath string
+	err = tx.QueryRowContext(ctx, `
+		select v.id, v.manifest_json, v.package_path
+		from software sw
+		join lateral (
+			select *
+			from software_versions v
+			where v.software_id=sw.id
+			order by coalesce(v.published_at, v.created_at) desc, v.id desc
+			limit 1
+		) v on true
+		where sw.id=$1 and sw.owner_user_id=$2 and sw.deleted_at is null
+		for update of sw`, softwareID, userID).Scan(&versionID, &manifestRaw, &packagePath)
+	if err != nil {
+		return err
+	}
+
+	var manifest Manifest
+	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+		return errors.New("当前版本的 aishop.json 不是合法 JSON。")
+	}
+	manifest.Name = name
+	manifest.Summary = summary
+	manifest.Category = category
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+
+	backupPath := packagePath + ".edit-" + randomID()
+	if err := copyFile(packagePath, backupPath); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if committed {
+			_ = os.Remove(backupPath)
+			return
+		}
+		_ = copyFile(backupPath, packagePath)
+		_ = os.Remove(backupPath)
+	}()
+
+	if err := rewritePackageManifest(packagePath, manifestJSON); err != nil {
+		return err
+	}
+	sha, err := computeSHA256(packagePath)
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `update software set name=$1, summary=$2, category=$3 where id=$4 and owner_user_id=$5 and deleted_at is null`, name, summary, category, softwareID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `update software_versions set manifest_json=$1, sha256=$2 where id=$3`, string(manifestJSON), sha, versionID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	committed = true
+	return nil
 }
 
 func (s *Store) DeleteSubmission(ctx context.Context, userID int64, softwareID string) error {
