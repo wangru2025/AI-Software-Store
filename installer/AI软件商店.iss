@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.0.0"
 #endif
 
 #define MyAppName "AI 软件商店"
