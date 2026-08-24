@@ -59,8 +59,7 @@ namespace AIShop.Client
                 Width = 180,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 TabIndex = 0,
-                AccessibleName = "软件分类",
-                AccessibleDescription = "选择分类后按回车加载该分类的软件。"
+                AccessibleName = "软件分类"
             };
             _category.Items.Add(SoftwareCategories.All);
             foreach (var category in SoftwareCategories.Values)
@@ -74,6 +73,7 @@ namespace AIShop.Client
                 {
                     LoadSelectedCategory();
                     e.Handled = true;
+                    e.SuppressKeyPress = true;
                 }
             };
             Controls.Add(_category);
@@ -105,8 +105,7 @@ namespace AIShop.Client
                 Width = 360,
                 Height = 24,
                 TabIndex = 2,
-                AccessibleName = "搜索关键词",
-                AccessibleDescription = "输入关键词后按回车，在当前分类中搜索软件。"
+                AccessibleName = "搜索关键词"
             };
             _search.KeyDown += (s, e) =>
             {
@@ -114,6 +113,7 @@ namespace AIShop.Client
                 {
                     SearchCurrentCategory();
                     e.Handled = true;
+                    e.SuppressKeyPress = true;
                 }
             };
             Controls.Add(_search);
@@ -300,6 +300,8 @@ namespace AIShop.Client
         private void LoadSelectedCategory()
         {
             _loadedCategory = _category.SelectedItem as string ?? SoftwareCategories.All;
+            _searchKeyword = "";
+            _search.Text = "";
             _lastIndex = 0;
             PopulateSoftwareList();
             _list.Focus();
