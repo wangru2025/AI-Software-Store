@@ -110,8 +110,7 @@ namespace AIShop.Client
                 var zip = Path.Combine(dir, item.Id + "-" + item.Version + ".zip");
                 var url = catalog.BuildDownloadUrl(item.Id, item.Version);
                 await downloader.DownloadAsync(url, zip, item.PackageSha256, AsIntermediateProgress(progress), token).ConfigureAwait(false);
-                var installer = new PackageInstaller();
-                await installer.InstallAsync(zip, progress, token).ConfigureAwait(false);
+                await ElevatedInstallWorker.InstallAsync(zip, progress, token).ConfigureAwait(false);
             });
         }
 

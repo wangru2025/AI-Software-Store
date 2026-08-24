@@ -59,7 +59,7 @@ namespace AIShop.Client
                     "- version：必填，当前投稿版本。已上传版本不能原地修改，修改安装内容必须发新版本。\r\n" +
                     "- author：建议填写，显示用作者名。\r\n" +
                     "- summary：必填，软件简介。上传后仍可在投稿管理中编辑。\r\n" +
-                    "- requiresAdmin：是否需要管理员权限。需要写 true 或 false。\r\n" +
+                    "- requiresAdmin：是否需要管理员权限。需要写 true 或 false。为 true 时，客户端会在安装阶段请求管理员权限。\r\n" +
                     "- install：安装脚本路径，默认 install.ps1。\r\n" +
                     "- uninstall：可选，卸载脚本路径。声明了就必须存在。\r\n" +
                     "- update：可选，更新脚本路径。声明了就必须存在。\r\n" +

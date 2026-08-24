@@ -8,8 +8,13 @@ namespace AIShop.Client
     internal static class Program
     {
         [STAThread]
-        private static void Main()
+        private static void Main(string[] args)
         {
+            if (ElevatedInstallWorker.TryRunFromCommandLine(args))
+            {
+                return;
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 

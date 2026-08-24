@@ -23,13 +23,7 @@ namespace AIShop.Client.Services
             progress.Report(new ProgressSnapshot { Percent = 0, Message = "正在准备安装" });
             ExtractSafe(zipPath, workDir);
 
-            var manifestPath = Path.Combine(workDir, "aishop.json");
-            if (!File.Exists(manifestPath))
-            {
-                throw new InvalidOperationException("软件包缺少 aishop.json。");
-            }
-
-            var manifest = JsonConvert.DeserializeObject<PackageManifest>(File.ReadAllText(manifestPath));
+            var manifest = ReadManifestFromDirectory(workDir);
             if (manifest == null || string.IsNullOrWhiteSpace(manifest.id) || string.IsNullOrWhiteSpace(manifest.version))
             {
                 throw new InvalidOperationException("软件包信息不完整。");
@@ -71,6 +65,27 @@ namespace AIShop.Client.Services
                 InstalledAt = DateTime.Now
             });
             progress.Report(new ProgressSnapshot { Percent = 100, Message = "安装完成", IsCompleted = true });
+        }
+
+        public static PackageManifest ReadManifest(string zipPath)
+        {
+            using (var archive = ZipFile.OpenRead(zipPath))
+            {
+                foreach (var entry in archive.Entries)
+                {
+                    if (!string.Equals(entry.FullName.Replace('\\', '/'), "aishop.json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    using (var reader = new StreamReader(entry.Open()))
+                    {
+                        return JsonConvert.DeserializeObject<PackageManifest>(reader.ReadToEnd());
+                    }
+                }
+            }
+
+            throw new InvalidOperationException("软件包缺少 aishop.json。");
         }
 
         public void Launch(SoftwareItem item)
@@ -202,13 +217,24 @@ namespace AIShop.Client.Services
             return value.Replace("..", "_");
         }
 
-        private static bool IsAdministrator()
+        public static bool IsAdministrator()
         {
             using (var identity = WindowsIdentity.GetCurrent())
             {
                 var principal = new WindowsPrincipal(identity);
                 return principal.IsInRole(WindowsBuiltInRole.Administrator);
             }
+        }
+
+        private static PackageManifest ReadManifestFromDirectory(string workDir)
+        {
+            var manifestPath = Path.Combine(workDir, "aishop.json");
+            if (!File.Exists(manifestPath))
+            {
+                throw new InvalidOperationException("软件包缺少 aishop.json。");
+            }
+
+            return JsonConvert.DeserializeObject<PackageManifest>(File.ReadAllText(manifestPath));
         }
     }
 }
