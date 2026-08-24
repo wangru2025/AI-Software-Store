@@ -164,7 +164,7 @@ namespace AIShop.Client.Services
             await UploadSubmissionAsync(zipPath, null, CancellationToken.None).ConfigureAwait(false);
         }
 
-        public async Task UploadSubmissionAsync(string zipPath, IProgress<ProgressSnapshot> progress, CancellationToken cancellationToken)
+        public async Task UploadSubmissionAsync(string zipPath, IProgress<ProgressSnapshot> progress, CancellationToken cancellationToken, Action waitIfPaused = null)
         {
             if (string.IsNullOrWhiteSpace(zipPath) || !File.Exists(zipPath))
             {
@@ -188,7 +188,7 @@ namespace AIShop.Client.Services
                     TotalBytes = total,
                     BytesPerSecond = sent / Math.Max(0.001, watch.Elapsed.TotalSeconds)
                 });
-            }))
+            }, waitIfPaused))
             {
                 streamContent.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
                 content.Add(streamContent, "package", Path.GetFileName(zipPath));

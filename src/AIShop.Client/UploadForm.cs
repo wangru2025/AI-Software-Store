@@ -1,7 +1,4 @@
 using System;
-using System.Diagnostics;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using AIShop.Client.Services;
 using AIShop.Shared;
@@ -10,22 +7,21 @@ namespace AIShop.Client
 {
     public sealed class UploadForm : Form
     {
-        private readonly ApiCatalogService _catalog;
-        private readonly string _zipPath;
+        private readonly BackgroundTask _task;
         private readonly ProgressBar _progress = new ProgressBar();
         private readonly Label _state = new Label();
         private readonly Label _bytes = new Label();
         private readonly Label _speed = new Label();
         private readonly Label _elapsed = new Label();
         private readonly Button _cancel = new Button();
-        private readonly CancellationTokenSource _cts = new CancellationTokenSource();
-        private readonly Stopwatch _watch = Stopwatch.StartNew();
-        private bool _finished;
+        private readonly Timer _elapsedTimer = new Timer();
 
         public UploadForm(ApiCatalogService catalog, string zipPath)
         {
-            _catalog = catalog;
-            _zipPath = zipPath;
+            _task = new BackgroundTask("上传 " + System.IO.Path.GetFileName(zipPath), "上传成功，已保存投稿。", async (task, progress, token) =>
+            {
+                await catalog.UploadSubmissionAsync(zipPath, progress, token, () => task.WaitIfPaused(token)).ConfigureAwait(false);
+            });
 
             Text = "正在上传";
             Width = 590;
@@ -58,6 +54,11 @@ namespace AIShop.Client
             _elapsed.Top = 94;
             _elapsed.Width = 270;
             Controls.Add(_elapsed);
+            UpdateElapsed();
+
+            _elapsedTimer.Interval = 1000;
+            _elapsedTimer.Tick += (s, e) => UpdateElapsed();
+            _elapsedTimer.Start();
 
             _cancel.Text = "取消";
             _cancel.Left = 462;
@@ -70,46 +71,73 @@ namespace AIShop.Client
             {
                 if (e.KeyCode == Keys.Escape)
                 {
-                    Close();
+                    Hide();
+                    e.Handled = true;
                 }
             };
 
-            Load += async (s, e) => await RunAsync();
+            _task.Changed += OnTaskChanged;
+            FormClosed += (s, e) => _task.Changed -= OnTaskChanged;
+            Load += (s, e) =>
+            {
+                UpdateProgress(_task.Snapshot);
+                _task.Start();
+            };
         }
 
         public bool Succeeded { get; private set; }
 
-        private async Task RunAsync()
+        private void OnTaskChanged(object sender, EventArgs e)
         {
-            try
+            if (IsDisposed)
             {
-                await _catalog.UploadSubmissionAsync(_zipPath, new Progress<ProgressSnapshot>(UpdateProgress), _cts.Token);
+                return;
+            }
+
+            if (InvokeRequired)
+            {
+                if (IsHandleCreated)
+                {
+                    BeginInvoke((Action)(() => HandleTaskChanged()));
+                }
+                return;
+            }
+
+            HandleTaskChanged();
+        }
+
+        private void HandleTaskChanged()
+        {
+            UpdateProgress(_task.Snapshot);
+            if (!_task.IsFinished || !_task.TryMarkNotificationShown())
+            {
+                return;
+            }
+
+            _cancel.Enabled = false;
+            if (_task.IsCompleted)
+            {
                 Succeeded = true;
-                _finished = true;
-                MessageBox.Show("上传成功，已保存为草稿。", "投稿软件");
-                Close();
+                MessageBox.Show(_task.SuccessMessage, "投稿软件", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
-            catch (OperationCanceledException)
+            else if (_task.IsFailed)
             {
-                Close();
+                MessageBox.Show(FriendlyMessage(_task.ErrorMessage), "投稿失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-            catch (Exception ex)
-            {
-                AppLog.Error("投稿失败", ex);
-                MessageBox.Show(FriendlyMessage(ex), "投稿失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                _cancel.Enabled = false;
-                _finished = true;
-                Close();
-            }
+
+            Close();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (!_finished && !_cts.IsCancellationRequested)
+            if (e.CloseReason == CloseReason.UserClosing && !_task.IsFinished)
             {
-                _cts.Cancel();
+                e.Cancel = true;
+                Hide();
+                return;
             }
 
+            _elapsedTimer.Stop();
             base.OnFormClosing(e);
         }
 
@@ -119,7 +147,7 @@ namespace AIShop.Client
             _state.Text = "状态：" + (string.IsNullOrWhiteSpace(snapshot.Message) ? "正在上传" : snapshot.Message);
             _bytes.Text = "大小：" + FormatProgress(snapshot.BytesTransferred, snapshot.TotalBytes);
             _speed.Text = "速度：" + FormatRate(snapshot.BytesPerSecond);
-            _elapsed.Text = "耗时：" + _watch.Elapsed.ToString(@"hh\:mm\:ss");
+            UpdateElapsed();
 
             if (snapshot.IsCompleted || snapshot.IsFailed)
             {
@@ -131,7 +159,7 @@ namespace AIShop.Client
         {
             _cancel.Enabled = false;
             SetStatus("正在取消...");
-            _cts.Cancel();
+            _task.Cancel();
         }
 
         private void SetStatus(string message)
@@ -139,9 +167,19 @@ namespace AIShop.Client
             _state.Text = "状态：" + message;
         }
 
+        private void UpdateElapsed()
+        {
+            _elapsed.Text = "耗时：" + _task.Elapsed.ToString(@"hh\:mm\:ss");
+        }
+
         private static string FriendlyMessage(Exception ex)
         {
-            var message = ex.Message ?? "";
+            return FriendlyMessage(ex.Message);
+        }
+
+        private static string FriendlyMessage(string rawMessage)
+        {
+            var message = rawMessage ?? "";
             if (message.IndexOf("duplicate key value violates unique constraint", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 message.IndexOf("software_versions_software_id_version_key", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 message.IndexOf("SQLSTATE 23505", StringComparison.OrdinalIgnoreCase) >= 0)

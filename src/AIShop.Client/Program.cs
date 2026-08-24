@@ -28,7 +28,17 @@ namespace AIShop.Client
             {
                 catalog.RestoreSession(persisted.Token, persisted.User);
             }
-            Application.Run(new MainForm(catalog));
+            var mainForm = new MainForm(catalog);
+            SingleInstanceManager instance;
+            if (!SingleInstanceManager.TryCreate(mainForm, mainForm.RestoreFromTray, out instance))
+            {
+                return;
+            }
+
+            using (instance)
+            {
+                Application.Run(mainForm);
+            }
         }
     }
 }

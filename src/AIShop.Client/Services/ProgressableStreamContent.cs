@@ -10,12 +10,14 @@ namespace AIShop.Client.Services
     {
         private readonly Stream _source;
         private readonly Action<long, long> _progress;
+        private readonly Action _beforeChunk;
         private readonly int _bufferSize;
 
-        public ProgressableStreamContent(Stream source, Action<long, long> progress, int bufferSize = 81920)
+        public ProgressableStreamContent(Stream source, Action<long, long> progress, Action beforeChunk = null, int bufferSize = 81920)
         {
             _source = source ?? throw new ArgumentNullException(nameof(source));
             _progress = progress;
+            _beforeChunk = beforeChunk;
             _bufferSize = bufferSize;
         }
 
@@ -33,12 +35,14 @@ namespace AIShop.Client.Services
 
             while (true)
             {
+                _beforeChunk?.Invoke();
                 var read = await _source.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
                 if (read == 0)
                 {
                     break;
                 }
 
+                _beforeChunk?.Invoke();
                 await stream.WriteAsync(buffer, 0, read).ConfigureAwait(false);
                 sent += read;
                 _progress?.Invoke(sent, total);

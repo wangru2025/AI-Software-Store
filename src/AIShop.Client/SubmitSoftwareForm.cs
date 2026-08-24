@@ -77,14 +77,16 @@ namespace AIShop.Client
             {
                 _uploading = true;
                 _upload.Enabled = false;
-                using (var form = new UploadForm(_catalog, _path.Text))
+                var form = new UploadForm(_catalog, _path.Text);
+                if (Owner != null)
                 {
-                    form.ShowDialog(this);
-                    if (form.Succeeded)
-                    {
-                        Close();
-                    }
+                    form.Show(Owner);
                 }
+                else
+                {
+                    form.Show();
+                }
+                Close();
             }
             catch (Exception ex)
             {

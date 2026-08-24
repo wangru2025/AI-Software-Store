@@ -19,20 +19,12 @@ namespace AIShop.Client
         private readonly Button _pause = new Button();
         private readonly Button _cancel = new Button();
         private readonly System.Windows.Forms.Timer _elapsedTimer = new System.Windows.Forms.Timer();
-        private readonly ManagedDownloader _downloader = new ManagedDownloader();
-        private readonly CancellationTokenSource _cts = new CancellationTokenSource();
-        private readonly Func<ManagedDownloader, IProgress<ProgressSnapshot>, CancellationToken, Task> _operation;
-        private readonly string _successTitle;
-        private readonly string _successMessage;
-        private readonly Stopwatch _watch = Stopwatch.StartNew();
-        private bool _paused;
+        private readonly BackgroundTask _task;
 
-        private DownloadForm(string title, string successMessage, Func<ManagedDownloader, IProgress<ProgressSnapshot>, CancellationToken, Task> operation)
+        private DownloadForm(BackgroundTask task)
         {
-            _operation = operation;
-            _successTitle = title;
-            _successMessage = successMessage;
-            Text = title;
+            _task = task;
+            Text = task.Title;
             Width = 590;
             Height = 185;
             StartPosition = FormStartPosition.CenterParent;
@@ -88,10 +80,17 @@ namespace AIShop.Client
                 if (e.KeyCode == Keys.Escape)
                 {
                     Hide();
+                    e.Handled = true;
                 }
             };
 
-            Load += async (s, e) => await RunAsync();
+            _task.Changed += OnTaskChanged;
+            FormClosed += (s, e) => _task.Changed -= OnTaskChanged;
+            Load += (s, e) =>
+            {
+                UpdateProgress(_task.Snapshot);
+                _task.Start();
+            };
         }
 
         public static DownloadForm ForInstall(ApiCatalogService catalog, SoftwareItem item)
@@ -103,30 +102,37 @@ namespace AIShop.Client
         {
             var title = (isUpdate ? "更新 " : "下载 ") + item.Name;
             var success = isUpdate ? "更新完成。" : "安装完成。";
-            return new DownloadForm(title, success, async (downloader, progress, token) =>
+            var task = new BackgroundTask(title, success, async (backgroundTask, progress, token) =>
             {
+                var downloader = new ManagedDownloader();
+                backgroundTask.Downloader = downloader;
                 var dir = Path.Combine(Path.GetTempPath(), "AI软件商店", item.Id, item.Version);
                 Directory.CreateDirectory(dir);
                 var zip = Path.Combine(dir, item.Id + "-" + item.Version + ".zip");
                 var url = catalog.BuildDownloadUrl(item.Id, item.Version);
                 await downloader.DownloadAsync(url, zip, item.PackageSha256, AsIntermediateProgress(progress), token).ConfigureAwait(false);
+                backgroundTask.WaitIfPaused(token);
                 await ElevatedInstallWorker.InstallAsync(zip, progress, token).ConfigureAwait(false);
             });
+            return new DownloadForm(task);
         }
 
         public static DownloadForm ForUninstall(SoftwareItem item)
         {
-            return new DownloadForm("卸载 " + item.Name, "卸载完成。", async (downloader, progress, token) =>
+            var task = new BackgroundTask("卸载 " + item.Name, "卸载完成。", async (backgroundTask, progress, token) =>
             {
                 var installer = new PackageInstaller();
                 await installer.UninstallAsync(item, progress, token).ConfigureAwait(false);
             });
+            return new DownloadForm(task);
         }
 
         public static DownloadForm ForClientUpdate(ClientUpdateInfo update)
         {
-            return new DownloadForm("更新 AI 软件商店", null, async (downloader, progress, token) =>
+            var task = new BackgroundTask("更新 AI 软件商店", null, async (backgroundTask, progress, token) =>
             {
+                var downloader = new ManagedDownloader();
+                backgroundTask.Downloader = downloader;
                 var dir = Path.Combine(Path.GetTempPath(), "AI软件商店", "client-update");
                 Directory.CreateDirectory(dir);
                 var file = Path.Combine(dir, "AIShop.Client.Update.zip");
@@ -136,51 +142,66 @@ namespace AIShop.Client
                 progress.Report(new ProgressSnapshot { Percent = 100, Message = "正在启动更新程序", IsCompleted = true });
                 Application.Exit();
             });
+            return new DownloadForm(task);
         }
 
-        private async Task RunAsync()
+        public static DownloadForm ForTask(BackgroundTask task)
         {
-            var progress = new Progress<ProgressSnapshot>(UpdateProgress);
+            return new DownloadForm(task);
+        }
 
-            try
+        private void OnTaskChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed)
             {
-                await _operation(_downloader, progress, _cts.Token);
-                if (!_cts.IsCancellationRequested && !string.IsNullOrWhiteSpace(_successMessage))
-                {
-                    _pause.Enabled = false;
-                    _cancel.Enabled = false;
-                    MessageBox.Show(_successMessage, _successTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    Close();
-                }
+                return;
             }
-            catch (OperationCanceledException)
-            {
-                Close();
-            }
-            catch (Exception ex)
-            {
-                if (_cts.IsCancellationRequested)
-                {
-                    Close();
-                    return;
-                }
 
-                AppLog.Error("操作失败", ex);
-                _pause.Enabled = false;
-                _cancel.Enabled = false;
-                MessageBox.Show(ex.Message, "操作失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Close();
+            if (InvokeRequired)
+            {
+                if (IsHandleCreated)
+                {
+                    BeginInvoke((Action)(() => HandleTaskChanged()));
+                }
+                return;
             }
+
+            HandleTaskChanged();
+        }
+
+        private void HandleTaskChanged()
+        {
+            UpdateProgress(_task.Snapshot);
+            if (!_task.IsFinished || !_task.TryMarkNotificationShown())
+            {
+                return;
+            }
+
+            _pause.Enabled = false;
+            _cancel.Enabled = false;
+
+            if (_task.IsCompleted && !string.IsNullOrWhiteSpace(_task.SuccessMessage))
+            {
+                MessageBox.Show(_task.SuccessMessage, _task.Title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else if (_task.IsFailed)
+            {
+                MessageBox.Show(_task.ErrorMessage, "操作失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+
+            Close();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            _elapsedTimer.Stop();
-            if (!_cts.IsCancellationRequested && _cancel.Enabled)
+            if (e.CloseReason == CloseReason.UserClosing && !_task.IsFinished)
             {
-                _cts.Cancel();
+                e.Cancel = true;
+                Hide();
+                return;
             }
 
+            _elapsedTimer.Stop();
             base.OnFormClosing(e);
         }
 
@@ -197,8 +218,9 @@ namespace AIShop.Client
                 _speed.Text = "速度：" + FormatRate(snapshot.BytesPerSecond);
             }
             UpdateElapsed();
+            _pause.Text = _task.IsPaused ? "继续" : "暂停";
 
-            if (snapshot.IsCompleted || snapshot.IsFailed)
+            if (snapshot.IsCompleted || snapshot.IsFailed || _task.IsFinished)
             {
                 _pause.Enabled = false;
                 _cancel.Enabled = false;
@@ -207,18 +229,17 @@ namespace AIShop.Client
 
         private void TogglePause()
         {
-            _paused = !_paused;
-            if (_paused)
+            if (_task.IsPaused)
             {
-                _downloader.Pause();
-                _pause.Text = "继续";
-                SetStatus("下载已暂停");
+                _task.Resume();
+                _pause.Text = "暂停";
+                SetStatus("正在继续");
             }
             else
             {
-                _downloader.Resume();
-                _pause.Text = "暂停";
-                SetStatus("继续下载");
+                _task.Pause();
+                _pause.Text = "继续";
+                SetStatus("已暂停");
             }
         }
 
@@ -227,7 +248,7 @@ namespace AIShop.Client
             _cancel.Enabled = false;
             _pause.Enabled = false;
             SetStatus("正在取消...");
-            _cts.Cancel();
+            _task.Cancel();
         }
 
         private void SetStatus(string message)
@@ -237,7 +258,7 @@ namespace AIShop.Client
 
         private void UpdateElapsed()
         {
-            _elapsed.Text = "耗时：" + _watch.Elapsed.ToString(@"hh\:mm\:ss");
+            _elapsed.Text = "耗时：" + _task.Elapsed.ToString(@"hh\:mm\:ss");
         }
 
         private static IProgress<ProgressSnapshot> AsIntermediateProgress(IProgress<ProgressSnapshot> progress)

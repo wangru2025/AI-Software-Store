@@ -30,11 +30,13 @@ namespace AIShop.Client
             Width = 980;
             Height = 600;
             StartPosition = FormStartPosition.CenterScreen;
+            KeyPreview = true;
 
             var menu = new MenuStrip();
             var file = new ToolStripMenuItem("文件");
             file.DropDownItems.Add("投稿软件", null, async (s, e) => await OpenSubmissionAsync());
             file.DropDownItems.Add("个人中心", null, async (s, e) => await OpenPersonalCenterAsync());
+            file.DropDownItems.Add("任务管理", null, (s, e) => OpenTaskManager());
             file.DropDownItems.Add("隐藏到托盘", null, (s, e) => HideToTray());
             file.DropDownItems.Add("退出", null, (s, e) => Close());
             var help = new ToolStripMenuItem("帮助");
@@ -79,7 +81,21 @@ namespace AIShop.Client
                     HideToTray();
                 }
             };
-            FormClosed += (s, e) => _trayIcon.Dispose();
+            KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Escape)
+                {
+                    HideToTray();
+                    e.Handled = true;
+                }
+            };
+            FormClosing += OnMainFormClosing;
+            BackgroundTaskManager.Changed += OnBackgroundTasksChanged;
+            FormClosed += (s, e) =>
+            {
+                BackgroundTaskManager.Changed -= OnBackgroundTasksChanged;
+                _trayIcon.Dispose();
+            };
         }
 
         private void BuildContextMenu()
@@ -140,7 +156,7 @@ namespace AIShop.Client
             var menu = new ContextMenuStrip();
             menu.Items.Add("打开", null, (s, e) => RestoreFromTray());
             menu.Items.Add("退出", null, (s, e) => Close());
-            _trayIcon.Text = "AI 软件商店";
+            UpdateTrayText();
             _trayIcon.Icon = SystemIcons.Application;
             _trayIcon.ContextMenuStrip = menu;
             _trayIcon.DoubleClick += (s, e) => RestoreFromTray();
@@ -224,6 +240,14 @@ namespace AIShop.Client
             }
             RestoreFocus();
             await RefreshSoftwareAsync();
+        }
+
+        private void OpenTaskManager()
+        {
+            using (var form = new TaskManagerForm())
+            {
+                form.ShowDialog(this);
+            }
         }
 
         private async Task<bool> EnsureLoggedInAsync()
@@ -342,13 +366,51 @@ namespace AIShop.Client
             _list.Focus();
         }
 
+        private void OnMainFormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (e.CloseReason != CloseReason.UserClosing || !BackgroundTaskManager.HasRunningTasks())
+            {
+                return;
+            }
+
+            var result = MessageBox.Show("有任务正在运行，是否退出？", "AI 软件商店", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (result != DialogResult.Yes)
+            {
+                e.Cancel = true;
+            }
+        }
+
+        private void OnBackgroundTasksChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed)
+            {
+                return;
+            }
+
+            if (InvokeRequired)
+            {
+                if (IsHandleCreated)
+                {
+                    BeginInvoke((Action)UpdateTrayText);
+                }
+                return;
+            }
+
+            UpdateTrayText();
+        }
+
+        private void UpdateTrayText()
+        {
+            _trayIcon.Text = BackgroundTaskManager.HasRunningTasks() ? "AI 软件商店（工作中）" : "AI 软件商店";
+        }
+
         private void HideToTray()
         {
             _trayIcon.Visible = true;
             Hide();
         }
 
-        private void RestoreFromTray()
+        public void RestoreFromTray()
         {
             Show();
             WindowState = FormWindowState.Normal;
