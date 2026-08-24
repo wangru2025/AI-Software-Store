@@ -1,6 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,54 +31,141 @@ namespace AIShop.Client.Services
             Directory.CreateDirectory(Path.GetDirectoryName(targetPath));
             AppLog.Download("开始下载：" + url);
 
-            using (var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false))
+            var partialPath = targetPath + ".part";
+            if (File.Exists(partialPath))
             {
-                response.EnsureSuccessStatusCode();
-                var total = response.Content.Headers.ContentLength ?? -1L;
-                long read = 0;
+                File.Delete(partialPath);
+            }
 
-                using (var source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
-                using (var target = File.Create(targetPath))
+            long read = 0;
+            long total = -1;
+            var watch = Stopwatch.StartNew();
+            var buffer = new byte[81920];
+
+            try
+            {
+                while (true)
                 {
-                    var buffer = new byte[81920];
-                    while (true)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    while (_paused)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        while (_paused)
+                        progress.Report(Snapshot(read, total, watch, "下载已暂停"));
+                        await Task.Delay(200, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, url))
+                    {
+                        if (read > 0)
                         {
-                            progress.Report(new ProgressSnapshot { Percent = Percent(read, total), Message = "下载已暂停" });
-                            await Task.Delay(200, cancellationToken).ConfigureAwait(false);
+                            request.Headers.Range = new RangeHeaderValue(read, null);
                         }
 
-                        var count = await source.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
-                        if (count == 0)
+                        using (var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false))
                         {
-                            break;
-                        }
+                            response.EnsureSuccessStatusCode();
 
-                        await target.WriteAsync(buffer, 0, count, cancellationToken).ConfigureAwait(false);
-                        read += count;
-                        progress.Report(new ProgressSnapshot
-                        {
-                            Percent = Percent(read, total),
-                            Message = "正在下载软件包"
-                        });
+                            if (read > 0 && response.StatusCode != HttpStatusCode.PartialContent)
+                            {
+                                read = 0;
+                                if (File.Exists(partialPath))
+                                {
+                                    File.Delete(partialPath);
+                                }
+                            }
+
+                            total = ResolveTotalLength(response, read);
+
+                            using (var source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                            using (var target = new FileStream(partialPath, read > 0 ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.None))
+                            {
+                                while (true)
+                                {
+                                    cancellationToken.ThrowIfCancellationRequested();
+                                    if (_paused)
+                                    {
+                                        progress.Report(Snapshot(read, total, watch, "下载已暂停"));
+                                        break;
+                                    }
+
+                                    var count = await source.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
+                                    if (count == 0)
+                                    {
+                                        break;
+                                    }
+
+                                    await target.WriteAsync(buffer, 0, count, cancellationToken).ConfigureAwait(false);
+                                    read += count;
+                                    progress.Report(Snapshot(read, total, watch, "正在下载软件包"));
+                                }
+                            }
+                        }
+                    }
+
+                    if (_paused)
+                    {
+                        continue;
+                    }
+
+                    if (total <= 0 || read >= total)
+                    {
+                        break;
                     }
                 }
-            }
 
-            if (!string.IsNullOrWhiteSpace(expectedSha256))
-            {
-                progress.Report(new ProgressSnapshot { Percent = 98, Message = "正在检查软件包" });
-                var actual = ComputeSha256(targetPath);
-                if (!string.Equals(actual, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                if (File.Exists(targetPath))
                 {
-                    throw new InvalidOperationException("软件包校验失败。");
+                    File.Delete(targetPath);
                 }
+                File.Move(partialPath, targetPath);
+
+                if (!string.IsNullOrWhiteSpace(expectedSha256))
+                {
+                    progress.Report(new ProgressSnapshot { Percent = 98, Message = "正在检查软件包", BytesTransferred = read, TotalBytes = total, BytesPerSecond = Speed(read, watch) });
+                    var actual = ComputeSha256(targetPath);
+                    if (!string.Equals(actual, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException("软件包校验失败。");
+                    }
+                }
+
+                progress.Report(new ProgressSnapshot { Percent = 100, Message = "下载完成", BytesTransferred = read, TotalBytes = total, BytesPerSecond = Speed(read, watch), IsCompleted = true });
+                AppLog.Download("下载完成：" + targetPath);
+            }
+            catch (OperationCanceledException)
+            {
+                if (File.Exists(partialPath))
+                {
+                    File.Delete(partialPath);
+                }
+                throw;
+            }
+        }
+
+        private static ProgressSnapshot Snapshot(long read, long total, Stopwatch watch, string message)
+        {
+            return new ProgressSnapshot
+            {
+                Percent = Percent(read, total),
+                Message = message,
+                BytesTransferred = read,
+                TotalBytes = total,
+                BytesPerSecond = Speed(read, watch)
+            };
+        }
+
+        private static long ResolveTotalLength(HttpResponseMessage response, long read)
+        {
+            if (response.Content.Headers.ContentRange != null && response.Content.Headers.ContentRange.Length.HasValue)
+            {
+                return response.Content.Headers.ContentRange.Length.Value;
             }
 
-            progress.Report(new ProgressSnapshot { Percent = 100, Message = "下载完成", IsCompleted = true });
-            AppLog.Download("下载完成：" + targetPath);
+            if (response.Content.Headers.ContentLength.HasValue)
+            {
+                return read + response.Content.Headers.ContentLength.Value;
+            }
+
+            return -1;
         }
 
         private static int Percent(long read, long total)
@@ -86,6 +176,11 @@ namespace AIShop.Client.Services
             }
 
             return Math.Max(0, Math.Min(100, (int)(read * 100 / total)));
+        }
+
+        private static double Speed(long read, Stopwatch watch)
+        {
+            return read / Math.Max(0.001, watch.Elapsed.TotalSeconds);
         }
 
         private static string ComputeSha256(string path)

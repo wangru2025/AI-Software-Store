@@ -1,5 +1,4 @@
 using System;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using AIShop.Client.Services;
 using AIShop.Client.UI;
@@ -10,6 +9,8 @@ namespace AIShop.Client
     {
         private readonly ApiCatalogService _catalog;
         private readonly TextBox _path;
+        private readonly Button _upload;
+        private bool _uploading;
 
         public SubmitSoftwareForm(ApiCatalogService catalog)
         {
@@ -28,9 +29,9 @@ namespace AIShop.Client
             browse.Click += (s, e) => Browse();
             Controls.Add(browse);
 
-            var upload = FormTools.Button("上传", 255, 75);
-            upload.Click += async (s, e) => await UploadAsync();
-            Controls.Add(upload);
+            _upload = FormTools.Button("上传", 255, 75);
+            _upload.Click += (s, e) => Upload();
+            Controls.Add(_upload);
 
             var help = FormTools.Button("投稿说明", 365, 75);
             help.Click += (s, e) =>
@@ -59,18 +60,41 @@ namespace AIShop.Client
             }
         }
 
-        private async Task UploadAsync()
+        private void Upload()
         {
+            if (_uploading)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_path.Text))
+            {
+                MessageBox.Show("请选择要上传的 zip 投稿包。", "投稿软件", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             try
             {
-                await _catalog.UploadSubmissionAsync(_path.Text);
-                MessageBox.Show("上传成功，已保存为草稿。", "投稿软件");
-                Close();
+                _uploading = true;
+                _upload.Enabled = false;
+                using (var form = new UploadForm(_catalog, _path.Text))
+                {
+                    form.ShowDialog(this);
+                    if (form.Succeeded)
+                    {
+                        Close();
+                    }
+                }
             }
             catch (Exception ex)
             {
                 AppLog.Error("投稿失败", ex);
                 FormTools.ShowError(ex);
+            }
+            finally
+            {
+                _uploading = false;
+                _upload.Enabled = true;
             }
         }
     }

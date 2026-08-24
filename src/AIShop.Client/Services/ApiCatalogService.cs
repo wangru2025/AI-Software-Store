@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using AIShop.Shared;
 using Newtonsoft.Json;
@@ -156,14 +158,64 @@ namespace AIShop.Client.Services
 
         public async Task UploadSubmissionAsync(string zipPath)
         {
+            await UploadSubmissionAsync(zipPath, null, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        public async Task UploadSubmissionAsync(string zipPath, IProgress<ProgressSnapshot> progress, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(zipPath) || !File.Exists(zipPath))
+            {
+                throw new FileNotFoundException("请选择要上传的 zip 投稿包。", zipPath);
+            }
+
+            var watch = Stopwatch.StartNew();
+            progress?.Report(new ProgressSnapshot { Percent = 0, Message = "正在准备上传" });
+
             using (var content = new MultipartFormDataContent())
             using (var file = File.OpenRead(zipPath))
-            using (var streamContent = new StreamContent(file))
+            using (var streamContent = new ProgressableStreamContent(file, (sent, total) =>
+            {
+                progress?.Report(new ProgressSnapshot
+                {
+                    Percent = Percent(sent, total),
+                    Message = sent >= total ? "正在等待服务器校验" : "正在上传投稿包",
+                    BytesTransferred = sent,
+                    TotalBytes = total,
+                    BytesPerSecond = sent / Math.Max(0.001, watch.Elapsed.TotalSeconds)
+                });
+            }))
             {
                 streamContent.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
                 content.Add(streamContent, "package", Path.GetFileName(zipPath));
-                await SendAsync<object>(HttpMethod.Post, "api/submissions", content).ConfigureAwait(false);
+                using (var request = new HttpRequestMessage(HttpMethod.Post, "api/submissions"))
+                {
+                    if (!string.IsNullOrWhiteSpace(_token))
+                    {
+                        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+                    }
+
+                    request.Content = content;
+                    using (var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false))
+                    {
+                        progress?.Report(new ProgressSnapshot
+                        {
+                            Percent = 100,
+                            Message = "正在等待服务器校验",
+                            BytesTransferred = file.Length,
+                            TotalBytes = file.Length,
+                            BytesPerSecond = file.Length / Math.Max(0.001, watch.Elapsed.TotalSeconds)
+                        });
+
+                        var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            throw new ApiException(ParseError(text, response.StatusCode));
+                        }
+                    }
+                }
             }
+
+            progress?.Report(new ProgressSnapshot { Percent = 100, Message = "上传完成", IsCompleted = true });
         }
 
         public Task<ClientUpdateInfo> CheckClientUpdateAsync(string currentVersion)
@@ -251,6 +303,16 @@ namespace AIShop.Client.Services
         {
             public string Token { get; set; }
             public UserSession User { get; set; }
+        }
+
+        private static int Percent(long transferred, long total)
+        {
+            if (total <= 0)
+            {
+                return 0;
+            }
+
+            return Math.Max(0, Math.Min(100, (int)(transferred * 100 / total)));
         }
 
         private sealed class ErrorResponse

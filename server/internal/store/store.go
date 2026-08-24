@@ -9,6 +9,7 @@ import (
 	"errors"
 	"math"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -264,6 +265,10 @@ func (s *Store) SaveSubmission(ctx context.Context, userID int64, manifest Manif
 		values($1,$2,$3,$4,$5,$6,'Draft')`,
 		manifest.ID, manifest.Version, string(manifestJSON), packagePath, sha256, changelog)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "software_versions_software_id_version_key" {
+			return errors.New("这个软件的当前版本已经投稿过，请修改版本号后再上传。")
+		}
 		return err
 	}
 	return tx.Commit()
