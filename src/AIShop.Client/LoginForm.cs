@@ -22,11 +22,11 @@ namespace AIShop.Client
             FormTools.EnableEscClose(this);
 
             Controls.Add(FormTools.Label("用户名", 20, 22));
-            _username = FormTools.TextBox("请输入用户名，最多20个字符：", 135, 20, 240);
+            _username = FormTools.TextBox("用户名", "请输入用户名，最多20个字符：", 135, 20, 240);
             Controls.Add(_username);
 
             Controls.Add(FormTools.Label("密码", 20, 58));
-            _password = FormTools.TextBox("", 135, 56, 240, true);
+            _password = FormTools.TextBox("密码", "请输入密码，6到20个字符：", 135, 56, 240, true);
             Controls.Add(_password);
 
             var submit = FormTools.Button("登录", 175, 100);

@@ -29,12 +29,14 @@ namespace AIShop.Client
             _stars.Top = 22;
             _stars.Width = 160;
             _stars.DropDownStyle = ComboBoxStyle.DropDownList;
+            _stars.AccessibleName = "评分星级";
+            _stars.AccessibleDescription = "请选择 1 到 5 星。";
             _stars.Items.AddRange(new object[] { "1星", "2星", "3星", "4星", "5星" });
             _stars.SelectedIndex = 4;
             Controls.Add(_stars);
 
             Controls.Add(FormTools.Label("评论", 20, 60));
-            _comment = FormTools.TextBox("", 120, 58, 350, false, true);
+            _comment = FormTools.TextBox("评论", "请输入评论，可不填：", 120, 58, 350, false, true);
             Controls.Add(_comment);
 
             var save = FormTools.Button("发布", 260, 195);

@@ -22,7 +22,7 @@ namespace AIShop.Client
             FormTools.EnableEscClose(this);
 
             Controls.Add(FormTools.Label("zip 文件", 18, 24));
-            _path = FormTools.TextBox("", 100, 22, 390);
+            _path = FormTools.TextBox("zip 文件", "请选择要上传的 zip 投稿包：", 100, 22, 390);
             Controls.Add(_path);
 
             var browse = FormTools.Button("浏览", 500, 20, 75);

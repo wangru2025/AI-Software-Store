@@ -30,7 +30,12 @@ namespace AIShop.Client.UI
             };
         }
 
-        public static TextBox TextBox(string placeholder, int left, int top, int width, bool password = false, bool multiline = false)
+        public static TextBox TextBox(string prompt, int left, int top, int width, bool password = false, bool multiline = false)
+        {
+            return TextBox(null, prompt, left, top, width, password, multiline);
+        }
+
+        public static TextBox TextBox(string accessibleName, string prompt, int left, int top, int width, bool password = false, bool multiline = false)
         {
             var box = new TextBox
             {
@@ -40,13 +45,15 @@ namespace AIShop.Client.UI
                 Height = multiline ? 120 : 24,
                 Multiline = multiline,
                 ScrollBars = multiline ? ScrollBars.Vertical : ScrollBars.None,
-                Text = placeholder
+                Text = "",
+                AccessibleName = accessibleName
             };
+
+            box.AccessibleDescription = prompt;
 
             if (password)
             {
                 box.UseSystemPasswordChar = true;
-                box.Text = "";
             }
 
             return box;

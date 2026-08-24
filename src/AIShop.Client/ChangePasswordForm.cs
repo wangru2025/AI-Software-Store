@@ -23,15 +23,15 @@ namespace AIShop.Client
             FormTools.EnableEscClose(this);
 
             Controls.Add(FormTools.Label("旧密码", 20, 24));
-            _oldPassword = FormTools.TextBox("", 140, 22, 250, true);
+            _oldPassword = FormTools.TextBox("旧密码", "请输入旧密码：", 140, 22, 250, true);
             Controls.Add(_oldPassword);
 
             Controls.Add(FormTools.Label("新密码", 20, 60));
-            _newPassword = FormTools.TextBox("", 140, 58, 250, true);
+            _newPassword = FormTools.TextBox("新密码", "请输入新密码，6到20个字符：", 140, 58, 250, true);
             Controls.Add(_newPassword);
 
             Controls.Add(FormTools.Label("重复新密码", 20, 96));
-            _repeatPassword = FormTools.TextBox("", 140, 94, 250, true);
+            _repeatPassword = FormTools.TextBox("重复新密码", "请再次输入新密码：", 140, 94, 250, true);
             Controls.Add(_repeatPassword);
 
             var save = FormTools.Button("修改", 180, 145);

@@ -58,7 +58,9 @@ namespace AIShop.Client
                 Top = menu.Height + 8,
                 Width = 180,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                TabIndex = 0
+                TabIndex = 0,
+                AccessibleName = "软件分类",
+                AccessibleDescription = "选择分类后按回车加载该分类的软件。"
             };
             _category.Items.Add(SoftwareCategories.All);
             foreach (var category in SoftwareCategories.Values)
@@ -102,7 +104,9 @@ namespace AIShop.Client
                 Top = menu.Height + 8,
                 Width = 360,
                 Height = 24,
-                TabIndex = 2
+                TabIndex = 2,
+                AccessibleName = "搜索关键词",
+                AccessibleDescription = "输入关键词后按回车，在当前分类中搜索软件。"
             };
             _search.KeyDown += (s, e) =>
             {

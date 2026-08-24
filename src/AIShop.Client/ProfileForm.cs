@@ -22,12 +22,12 @@ namespace AIShop.Client
             FormTools.EnableEscClose(this);
 
             Controls.Add(FormTools.Label("用户名", 20, 24));
-            _username = FormTools.TextBox("请输入用户名，最多20个字符：", 140, 22, 250);
+            _username = FormTools.TextBox("用户名", "请输入用户名，最多20个字符：", 140, 22, 250);
             _username.Text = catalog.CurrentUser.Username;
             Controls.Add(_username);
 
             Controls.Add(FormTools.Label("昵称", 20, 60));
-            _nickname = FormTools.TextBox("请输入昵称，最多10个字符：", 140, 58, 250);
+            _nickname = FormTools.TextBox("昵称", "请输入昵称，最多10个字符：", 140, 58, 250);
             _nickname.Text = catalog.CurrentUser.Nickname;
             Controls.Add(_nickname);
 

@@ -26,7 +26,7 @@ namespace AIShop.Client
             FormTools.EnableEscClose(this);
 
             Controls.Add(FormTools.Label("软件名称", 20, 24));
-            _name = FormTools.TextBox("", 120, 22, 380);
+            _name = FormTools.TextBox("软件名称", "请输入软件名称：", 120, 22, 380);
             _name.Text = item.Name;
             Controls.Add(_name);
 
@@ -35,6 +35,8 @@ namespace AIShop.Client
             _category.Top = 58;
             _category.Width = 180;
             _category.DropDownStyle = ComboBoxStyle.DropDownList;
+            _category.AccessibleName = "软件分类";
+            _category.AccessibleDescription = "请选择软件分类。";
             foreach (var category in SoftwareCategories.Values)
             {
                 _category.Items.Add(category);
@@ -48,7 +50,7 @@ namespace AIShop.Client
             Controls.Add(_category);
 
             Controls.Add(FormTools.Label("简介", 20, 96));
-            _summary = FormTools.TextBox("", 120, 94, 380, false, true);
+            _summary = FormTools.TextBox("软件简介", "请输入软件简介：", 120, 94, 380, false, true);
             _summary.Text = item.Summary;
             Controls.Add(_summary);
 

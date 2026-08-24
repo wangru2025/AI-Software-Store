@@ -23,15 +23,15 @@ namespace AIShop.Client
             FormTools.EnableEscClose(this);
 
             Controls.Add(FormTools.Label("用户名", 20, 22));
-            _username = FormTools.TextBox("请输入用户名，最多20个字符：", 145, 20, 250);
+            _username = FormTools.TextBox("用户名", "请输入用户名，最多20个字符：", 145, 20, 250);
             Controls.Add(_username);
 
             Controls.Add(FormTools.Label("昵称", 20, 58));
-            _nickname = FormTools.TextBox("请输入昵称，最多10个字符：", 145, 56, 250);
+            _nickname = FormTools.TextBox("昵称", "请输入昵称，最多10个字符：", 145, 56, 250);
             Controls.Add(_nickname);
 
             Controls.Add(FormTools.Label("密码", 20, 94));
-            _password = FormTools.TextBox("", 145, 92, 250, true);
+            _password = FormTools.TextBox("密码", "请输入密码，6到20个字符：", 145, 92, 250, true);
             Controls.Add(_password);
 
             var submit = FormTools.Button("注册", 185, 140);

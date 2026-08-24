@@ -15,7 +15,7 @@ namespace AIShop.Client
             StartPosition = FormStartPosition.CenterParent;
             FormTools.EnableEscClose(this);
 
-            _body = FormTools.TextBox("", 20, 20, 425, false, true);
+            _body = FormTools.TextBox("回复内容", "请输入回复内容：", 20, 20, 425, false, true);
             Controls.Add(_body);
 
             var save = FormTools.Button("发布", 235, 165);
