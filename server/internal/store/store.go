@@ -1,0 +1,397 @@
+package store
+
+import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"math"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+type Store struct {
+	db *sql.DB
+}
+
+func New(db *sql.DB) *Store {
+	return &Store{db: db}
+}
+
+func (s *Store) Migrate() error {
+	queries := []string{
+		`create table if not exists users (
+			id bigserial primary key,
+			username text not null unique,
+			nickname text not null,
+			password_hash text not null,
+			created_at timestamptz not null default now()
+		)`,
+		`create table if not exists sessions (
+			token text primary key,
+			user_id bigint not null references users(id) on delete cascade,
+			created_at timestamptz not null default now()
+		)`,
+		`create table if not exists software (
+			id text primary key,
+			owner_user_id bigint not null references users(id) on delete cascade,
+			name text not null,
+			summary text not null,
+			created_at timestamptz not null default now(),
+			deleted_at timestamptz
+		)`,
+		`create table if not exists software_versions (
+			id bigserial primary key,
+			software_id text not null references software(id) on delete cascade,
+			version text not null,
+			manifest_json jsonb not null,
+			package_path text not null,
+			sha256 text not null,
+			changelog text not null,
+			status text not null check (status in ('Draft', 'Published')),
+			created_at timestamptz not null default now(),
+			published_at timestamptz,
+			download_count integer not null default 0,
+			unique(software_id, version)
+		)`,
+		`create table if not exists ratings (
+			id text primary key,
+			software_id text not null references software(id) on delete cascade,
+			user_id bigint not null references users(id) on delete cascade,
+			stars integer not null check (stars between 1 and 5),
+			comment text not null default '',
+			created_at timestamptz not null default now(),
+			updated_at timestamptz not null default now(),
+			unique(software_id, user_id)
+		)`,
+		`create table if not exists rating_replies (
+			id text primary key,
+			rating_id text not null references ratings(id) on delete cascade,
+			parent_reply_id text references rating_replies(id) on delete cascade,
+			user_id bigint not null references users(id) on delete cascade,
+			body text not null,
+			created_at timestamptz not null default now()
+		)`,
+		`create table if not exists download_records (
+			id bigserial primary key,
+			software_id text not null,
+			version text not null,
+			created_at timestamptz not null default now()
+		)`,
+	}
+	for _, query := range queries {
+		if _, err := s.db.Exec(query); err != nil {
+			return err
+		}
+	}
+	_, _ = s.db.Exec(`alter table software add column if not exists deleted_at timestamptz`)
+	return nil
+}
+
+func (s *Store) Register(ctx context.Context, username, nickname, password string) (string, UserSession, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", UserSession{}, err
+	}
+	var id int64
+	err = s.db.QueryRowContext(ctx, `insert into users(username,nickname,password_hash) values($1,$2,$3) returning id`, username, nickname, string(hash)).Scan(&id)
+	if err != nil {
+		return "", UserSession{}, err
+	}
+	token, err := s.createSession(ctx, id)
+	return token, UserSession{Username: username, Nickname: nickname}, err
+}
+
+func (s *Store) Login(ctx context.Context, username, password string) (string, UserSession, error) {
+	var user User
+	err := s.db.QueryRowContext(ctx, `select id, username, nickname, password_hash from users where username=$1`, username).
+		Scan(&user.ID, &user.Username, &user.Nickname, &user.PasswordHash)
+	if err != nil {
+		return "", UserSession{}, errors.New("用户名或密码错误")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+		return "", UserSession{}, errors.New("用户名或密码错误")
+	}
+	token, err := s.createSession(ctx, user.ID)
+	return token, UserSession{Username: user.Username, Nickname: user.Nickname}, err
+}
+
+func (s *Store) UserByToken(ctx context.Context, token string) (User, error) {
+	var user User
+	err := s.db.QueryRowContext(ctx, `select u.id,u.username,u.nickname,u.password_hash from sessions s join users u on u.id=s.user_id where s.token=$1`, token).
+		Scan(&user.ID, &user.Username, &user.Nickname, &user.PasswordHash)
+	return user, err
+}
+
+func (s *Store) UpdateProfile(ctx context.Context, userID int64, username, nickname string) error {
+	_, err := s.db.ExecContext(ctx, `update users set username=$1,nickname=$2 where id=$3`, username, nickname, userID)
+	return err
+}
+
+func (s *Store) ChangePassword(ctx context.Context, user User, oldPassword, newPassword string) error {
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)) != nil {
+		return errors.New("旧密码不正确")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `update users set password_hash=$1 where id=$2`, string(hash), user.ID)
+	return err
+}
+
+func (s *Store) ListPublishedSoftware(ctx context.Context) ([]SoftwareItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select sw.id, sw.name, latest.version, u.username, sw.summary, coalesce(latest.published_at, latest.created_at), latest.download_count, latest.sha256, latest.status
+		from software sw
+		join users u on u.id=sw.owner_user_id
+		join lateral (
+			select * from software_versions v
+			where v.software_id=sw.id and v.status='Published'
+			order by coalesce(v.published_at, v.created_at) desc
+			limit 1
+		) latest on true
+		where sw.deleted_at is null
+		order by coalesce(latest.published_at, latest.created_at) desc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []SoftwareItem{}
+	for rows.Next() {
+		var item SoftwareItem
+		if err := rows.Scan(&item.Id, &item.Name, &item.Version, &item.Author, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.PackageSha256, &item.Status); err != nil {
+			return nil, err
+		}
+		s.fillRatingStats(ctx, &item)
+		item.Changelogs, _ = s.Changelogs(ctx, item.Id)
+		list = append(list, item)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) Software(ctx context.Context, id string) (SoftwareItem, error) {
+	var item SoftwareItem
+	err := s.db.QueryRowContext(ctx, `
+		select sw.id, sw.name, latest.version, u.username, sw.summary, coalesce(latest.published_at, latest.created_at), latest.download_count, latest.sha256, latest.status
+		from software sw
+		join users u on u.id=sw.owner_user_id
+		join lateral (
+			select * from software_versions v where v.software_id=sw.id order by coalesce(v.published_at, v.created_at) desc limit 1
+		) latest on true
+		where sw.id=$1 and sw.deleted_at is null`, id).Scan(&item.Id, &item.Name, &item.Version, &item.Author, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.PackageSha256, &item.Status)
+	if err != nil {
+		return item, err
+	}
+	s.fillRatingStats(ctx, &item)
+	item.Changelogs, _ = s.Changelogs(ctx, item.Id)
+	return item, nil
+}
+
+func (s *Store) Changelogs(ctx context.Context, softwareID string) ([]ChangelogEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `select version, coalesce(published_at, created_at), changelog from software_versions where software_id=$1 order by coalesce(published_at, created_at) desc`, softwareID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []ChangelogEntry{}
+	for rows.Next() {
+		var entry ChangelogEntry
+		if err := rows.Scan(&entry.Version, &entry.Date, &entry.Body); err != nil {
+			return nil, err
+		}
+		list = append(list, entry)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) MySubmissions(ctx context.Context, userID int64) ([]SubmissionItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select sw.id, sw.name, v.version, sw.summary, coalesce(v.published_at, v.created_at), v.download_count, v.status
+		from software sw
+		join software_versions v on v.software_id=sw.id
+		where sw.owner_user_id=$1 and sw.deleted_at is null
+		order by coalesce(v.published_at, v.created_at) desc`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []SubmissionItem{}
+	for rows.Next() {
+		var item SubmissionItem
+		if err := rows.Scan(&item.SoftwareId, &item.Name, &item.Version, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.Status); err != nil {
+			return nil, err
+		}
+		var avg sql.NullFloat64
+		_ = s.db.QueryRowContext(ctx, `select avg(stars), count(*) from ratings where software_id=$1`, item.SoftwareId).Scan(&avg, &item.RatingCount)
+		if avg.Valid {
+			item.AverageRating = math.Round(avg.Float64*10) / 10
+		}
+		list = append(list, item)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) SaveSubmission(ctx context.Context, userID int64, manifest Manifest, packagePath, sha256, changelog string) error {
+	manifestJSON, _ := json.Marshal(manifest)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var ownerID int64
+	err = tx.QueryRowContext(ctx, `select owner_user_id from software where id=$1`, manifest.ID).Scan(&ownerID)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil && ownerID != userID {
+		return errors.New("这个软件 id 已被其它投稿者使用")
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		insert into software(id, owner_user_id, name, summary)
+		values($1,$2,$3,$4)
+		on conflict(id) do update set name=excluded.name, summary=excluded.summary, deleted_at=null`,
+		manifest.ID, userID, manifest.Name, manifest.Summary)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		insert into software_versions(software_id, version, manifest_json, package_path, sha256, changelog, status)
+		values($1,$2,$3,$4,$5,$6,'Draft')`,
+		manifest.ID, manifest.Version, string(manifestJSON), packagePath, sha256, changelog)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ToggleSubmissionStatus(ctx context.Context, userID int64, softwareID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		update software_versions v
+		set status = case when status='Draft' then 'Published' else 'Draft' end,
+		    published_at = case when status='Draft' then now() else published_at end
+		from software sw
+		where sw.id=v.software_id and sw.owner_user_id=$1 and sw.id=$2 and sw.deleted_at is null`, userID, softwareID)
+	return err
+}
+
+func (s *Store) UpdateSoftwareInfo(ctx context.Context, userID int64, softwareID, name, summary string) error {
+	_, err := s.db.ExecContext(ctx, `update software set name=$1, summary=$2 where id=$3 and owner_user_id=$4 and deleted_at is null`, name, summary, softwareID, userID)
+	return err
+}
+
+func (s *Store) DeleteSubmission(ctx context.Context, userID int64, softwareID string) error {
+	_, err := s.db.ExecContext(ctx, `update software set deleted_at=now() where id=$1 and owner_user_id=$2 and deleted_at is null`, softwareID, userID)
+	return err
+}
+
+func (s *Store) PackageForDownload(ctx context.Context, softwareID, version string) (string, error) {
+	var path string
+	err := s.db.QueryRowContext(ctx, `
+		select v.package_path
+		from software_versions v
+		join software sw on sw.id=v.software_id
+		where v.software_id=$1 and v.version=$2 and v.status='Published' and sw.deleted_at is null`, softwareID, version).Scan(&path)
+	if err != nil {
+		return "", err
+	}
+	_, _ = s.db.ExecContext(ctx, `update software_versions set download_count=download_count+1 where software_id=$1 and version=$2`, softwareID, version)
+	_, _ = s.db.ExecContext(ctx, `insert into download_records(software_id, version) values($1,$2)`, softwareID, version)
+	return path, nil
+}
+
+func (s *Store) Ratings(ctx context.Context, softwareID string) ([]RatingItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select r.id,r.software_id,u.nickname,r.stars,r.comment,r.created_at,
+		       (select count(*) from rating_replies rr where rr.rating_id=r.id)
+		from ratings r join users u on u.id=r.user_id
+		where r.software_id=$1 order by r.created_at desc`, softwareID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []RatingItem{}
+	for rows.Next() {
+		var item RatingItem
+		if err := rows.Scan(&item.Id, &item.SoftwareId, &item.Nickname, &item.Stars, &item.Comment, &item.CreatedAt, &item.ReplyCount); err != nil {
+			return nil, err
+		}
+		list = append(list, item)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) SaveRating(ctx context.Context, userID int64, softwareID string, stars int, comment string) error {
+	id := randomID()
+	_, err := s.db.ExecContext(ctx, `
+		insert into ratings(id,software_id,user_id,stars,comment)
+		values($1,$2,$3,$4,$5)
+		on conflict(software_id,user_id) do update set stars=excluded.stars, comment=excluded.comment, updated_at=now()`,
+		id, softwareID, userID, stars, comment)
+	return err
+}
+
+func (s *Store) Replies(ctx context.Context, ratingID string) ([]RatingReply, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select rr.id,rr.rating_id,coalesce(rr.parent_reply_id,''),u.nickname,rr.body,rr.created_at
+		from rating_replies rr join users u on u.id=rr.user_id
+		where rr.rating_id=$1 order by rr.created_at asc`, ratingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []RatingReply{}
+	for rows.Next() {
+		var item RatingReply
+		if err := rows.Scan(&item.Id, &item.RatingId, &item.ParentReplyId, &item.Nickname, &item.Body, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, item)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) AddReply(ctx context.Context, userID int64, ratingID, parentReplyID, body string) error {
+	var parent any
+	if parentReplyID != "" {
+		parent = parentReplyID
+	}
+	_, err := s.db.ExecContext(ctx, `insert into rating_replies(id,rating_id,parent_reply_id,user_id,body) values($1,$2,$3,$4,$5)`, randomID(), ratingID, parent, userID, body)
+	return err
+}
+
+func (s *Store) IsSoftwareOwner(ctx context.Context, userID int64, softwareID string) bool {
+	var ok bool
+	_ = s.db.QueryRowContext(ctx, `select exists(select 1 from software where id=$1 and owner_user_id=$2)`, softwareID, userID).Scan(&ok)
+	return ok
+}
+
+func (s *Store) RatingSoftwareID(ctx context.Context, ratingID string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `select software_id from ratings where id=$1`, ratingID).Scan(&id)
+	return id, err
+}
+
+func (s *Store) fillRatingStats(ctx context.Context, item *SoftwareItem) {
+	var avg sql.NullFloat64
+	_ = s.db.QueryRowContext(ctx, `select avg(stars), count(*) from ratings where software_id=$1`, item.Id).Scan(&avg, &item.RatingCount)
+	if avg.Valid {
+		item.AverageRating = math.Round(avg.Float64*10) / 10
+	}
+}
+
+func (s *Store) createSession(ctx context.Context, userID int64) (string, error) {
+	token := randomID() + randomID()
+	_, err := s.db.ExecContext(ctx, `insert into sessions(token,user_id) values($1,$2)`, token, userID)
+	return token, err
+}
+
+func randomID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}

@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AIShop.Client/AIShop.Client.csproj" />
+    <Project Path="src/AIShop.Shared/AIShop.Shared.csproj" />
+    <Project Path="src/AIShop.Updater/AIShop.Updater.csproj" />
+  </Folder>
+</Solution>
