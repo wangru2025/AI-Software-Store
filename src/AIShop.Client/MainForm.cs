@@ -13,8 +13,12 @@ namespace AIShop.Client
     public sealed class MainForm : Form
     {
         private readonly ApiCatalogService _catalog;
+        private readonly InstalledPackageStore _installed = new InstalledPackageStore();
+        private readonly PackageInstaller _launcher = new PackageInstaller();
         private readonly ListBox _list;
         private readonly ContextMenuStrip _softwareMenu = new ContextMenuStrip();
+        private readonly ToolStripMenuItem _primarySoftwareAction = new ToolStripMenuItem();
+        private readonly ToolStripMenuItem _uninstallAction = new ToolStripMenuItem();
         private readonly NotifyIcon _trayIcon = new NotifyIcon();
         private IReadOnlyList<SoftwareItem> _items = new List<SoftwareItem>();
         private int _lastIndex;
@@ -44,12 +48,12 @@ namespace AIShop.Client
             _list = FormTools.ListBox();
             _list.Top = menu.Height;
             _list.ContextMenuStrip = _softwareMenu;
-            _list.DoubleClick += async (s, e) => await DownloadSelectedAsync();
+            _list.DoubleClick += async (s, e) => await RunPrimaryActionAsync();
             _list.KeyDown += async (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
                 {
-                    await DownloadSelectedAsync();
+                    await RunPrimaryActionAsync();
                 }
                 else if (e.KeyCode == Keys.F5)
                 {
@@ -80,7 +84,8 @@ namespace AIShop.Client
 
         private void BuildContextMenu()
         {
-            _softwareMenu.Items.Add("下载", null, async (s, e) => await DownloadSelectedAsync());
+            _primarySoftwareAction.Click += async (s, e) => await RunPrimaryActionAsync();
+            _softwareMenu.Items.Add(_primarySoftwareAction);
             _softwareMenu.Items.Add("查看简介", null, (s, e) =>
             {
                 var item = SelectedSoftware();
@@ -116,7 +121,8 @@ namespace AIShop.Client
                     _ = RefreshSoftwareAsync();
                 }
             });
-            _softwareMenu.Items.Add("卸载", null, (s, e) =>
+            _uninstallAction.Text = "卸载";
+            _uninstallAction.Click += (s, e) =>
             {
                 var item = SelectedSoftware();
                 if (item != null)
@@ -124,7 +130,9 @@ namespace AIShop.Client
                     var form = DownloadForm.ForUninstall(item);
                     form.Show(this);
                 }
-            });
+            };
+            _softwareMenu.Items.Add(_uninstallAction);
+            _softwareMenu.Opening += (s, e) => UpdateSoftwareMenu();
         }
 
         private void BuildTray()
@@ -161,16 +169,32 @@ namespace AIShop.Client
             }
         }
 
-        private async Task DownloadSelectedAsync()
+        private Task RunPrimaryActionAsync()
         {
             var item = SelectedSoftware();
             if (item == null)
             {
-                return;
+                return Task.CompletedTask;
             }
 
-            var form = DownloadForm.ForInstall(_catalog, item);
+            var action = PrimaryActionFor(item);
+            if (action == SoftwarePrimaryAction.Launch)
+            {
+                try
+                {
+                    _launcher.Launch(item);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error("启动软件失败", ex);
+                    FormTools.ShowError(ex);
+                }
+                return Task.CompletedTask;
+            }
+
+            var form = DownloadForm.ForInstall(_catalog, item, action == SoftwarePrimaryAction.Update);
             form.Show(this);
+            return Task.CompletedTask;
         }
 
         private async Task OpenSubmissionAsync()
@@ -248,6 +272,62 @@ namespace AIShop.Client
             return item == null ? null : item.Value;
         }
 
+        private void UpdateSoftwareMenu()
+        {
+            var item = SelectedSoftware();
+            if (item == null)
+            {
+                _primarySoftwareAction.Text = "下载";
+                _primarySoftwareAction.Enabled = false;
+                _uninstallAction.Visible = false;
+                return;
+            }
+
+            var action = PrimaryActionFor(item);
+            _primarySoftwareAction.Enabled = true;
+            _primarySoftwareAction.Text = action == SoftwarePrimaryAction.Launch
+                ? "启动"
+                : action == SoftwarePrimaryAction.Update ? "更新" : "下载";
+            _uninstallAction.Visible = _installed.Find(item.Id) != null;
+        }
+
+        private SoftwarePrimaryAction PrimaryActionFor(SoftwareItem item)
+        {
+            var installed = _installed.Find(item.Id);
+            if (installed == null)
+            {
+                return SoftwarePrimaryAction.Download;
+            }
+
+            return CompareVersion(installed.Version, item.Version) < 0
+                ? SoftwarePrimaryAction.Update
+                : SoftwarePrimaryAction.Launch;
+        }
+
+        private static int CompareVersion(string left, string right)
+        {
+            var leftParts = (left ?? "").Split('.');
+            var rightParts = (right ?? "").Split('.');
+            var length = Math.Max(leftParts.Length, rightParts.Length);
+            for (var i = 0; i < length; i++)
+            {
+                var l = i < leftParts.Length ? VersionPart(leftParts[i]) : 0;
+                var r = i < rightParts.Length ? VersionPart(rightParts[i]) : 0;
+                if (l != r)
+                {
+                    return l.CompareTo(r);
+                }
+            }
+
+            return string.Compare(left ?? "", right ?? "", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int VersionPart(string value)
+        {
+            int number;
+            return int.TryParse(value, out number) ? number : 0;
+        }
+
         private void RememberFocus()
         {
             _lastIndex = Math.Max(0, _list.SelectedIndex);
@@ -274,6 +354,13 @@ namespace AIShop.Client
             WindowState = FormWindowState.Normal;
             Activate();
             _list.Focus();
+        }
+
+        private enum SoftwarePrimaryAction
+        {
+            Download,
+            Update,
+            Launch
         }
     }
 }

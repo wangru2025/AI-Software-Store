@@ -115,12 +115,12 @@ namespace AIShop.Shared
 
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "{0}，{1}星，{2:yyyy-MM-dd}，{3}，回复：{4}",
+                "{0}，{1}星，{2}，回复：{3}，时间：{4:yyyy-MM-dd}",
                 Nickname,
                 Stars,
-                CreatedAt,
                 comment,
-                ReplyCount);
+                ReplyCount,
+                CreatedAt);
         }
     }
 
@@ -169,6 +169,8 @@ namespace AIShop.Shared
         public string PackageCacheDir { get; set; }
         public string UninstallCommand { get; set; }
         public string UninstallArguments { get; set; }
+        public string LaunchPath { get; set; }
+        public string LaunchArguments { get; set; }
         public DateTime InstalledAt { get; set; }
     }
 

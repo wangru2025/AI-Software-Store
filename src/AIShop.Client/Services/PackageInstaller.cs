@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Security.Principal;
@@ -65,9 +66,37 @@ namespace AIShop.Client.Services
                 PackageCacheDir = cacheDir,
                 UninstallCommand = uninstallCommand,
                 UninstallArguments = uninstallArguments,
+                LaunchPath = result.LaunchPath,
+                LaunchArguments = result.LaunchArguments,
                 InstalledAt = DateTime.Now
             });
             progress.Report(new ProgressSnapshot { Percent = 100, Message = "安装完成", IsCompleted = true });
+        }
+
+        public void Launch(SoftwareItem item)
+        {
+            var installed = _installed.Find(item.Id);
+            if (installed == null)
+            {
+                throw new InvalidOperationException("本机没有找到该软件的安装记录。");
+            }
+
+            if (string.IsNullOrWhiteSpace(installed.LaunchPath))
+            {
+                throw new InvalidOperationException("该软件没有记录启动路径，请重新安装或更新后再试。");
+            }
+
+            if (!File.Exists(installed.LaunchPath) && !Directory.Exists(installed.LaunchPath))
+            {
+                throw new FileNotFoundException("找不到该软件的启动文件。", installed.LaunchPath);
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = installed.LaunchPath,
+                Arguments = installed.LaunchArguments ?? "",
+                UseShellExecute = true
+            });
         }
 
         public async Task UninstallAsync(SoftwareItem item, IProgress<ProgressSnapshot> progress, CancellationToken cancellationToken)

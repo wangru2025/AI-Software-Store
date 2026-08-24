@@ -91,6 +91,9 @@ namespace AIShop.Client
                     "Register-AIShopInstallLocation \"C:\\Program Files\\xxx\"\r\n" +
                     "用途：登记安装目录。\r\n" +
                     "\r\n" +
+                    "Register-AIShopLaunchPath -Path \"C:\\Program Files\\xxx\\xxx.exe\" -Arguments \"\"\r\n" +
+                    "用途：登记主程序或快捷方式路径。安装完成后，用户在主列表对已安装且无需更新的软件按回车会直接启动这个路径。\r\n" +
+                    "\r\n" +
                     "Test-AIShopCancel\r\n" +
                     "用途：检查用户是否点了取消。长耗时步骤前后都应该调用。\r\n" +
                     "\r\n" +
@@ -108,6 +111,7 @@ namespace AIShop.Client
                     "Set-AIShopProgress -Percent 30 -Message \"正在复制文件\"\r\n" +
                     "Copy-Item -Path \".\\app\\*\" -Destination $target -Recurse -Force\r\n" +
                     "Register-AIShopInstallLocation $target\r\n" +
+                    "Register-AIShopLaunchPath -Path (Join-Path $target \"DemoApp.exe\") -Arguments \"\"\r\n" +
                     "Register-AIShopUninstall -Command \"powershell.exe\" -Arguments \"-ExecutionPolicy Bypass -File `\"$target\\uninstall.ps1`\"\"\r\n" +
                     "Set-AIShopProgress -Percent 90 -Message \"正在完成设置\"\r\n" +
                     "Complete-AIShopInstall\r\n" +

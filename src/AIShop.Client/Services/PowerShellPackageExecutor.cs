@@ -83,6 +83,11 @@ namespace AIShop.Client.Services
                 {
                     result.InstallLocation = evt.path;
                 }
+                if (evt.type == "launch")
+                {
+                    result.LaunchPath = evt.path;
+                    result.LaunchArguments = evt.arguments;
+                }
                 progress.Report(new ProgressSnapshot
                 {
                     Percent = evt.percent,
@@ -112,6 +117,7 @@ function Set-AIShopStatus([string]$Message) { Write-AIShopEvent @{ type='status'
 function Set-AIShopProgress([int]$Percent, [string]$Message) { Write-AIShopEvent @{ type='progress'; percent=$Percent; message=$Message } }
 function Register-AIShopUninstall([string]$Command, [string]$Arguments) { Write-AIShopEvent @{ type='uninstall'; percent=0; message='已记录卸载方式'; command=$Command; arguments=$Arguments } }
 function Register-AIShopInstallLocation([string]$Path) { Write-AIShopEvent @{ type='installLocation'; percent=0; message='已记录安装位置'; path=$Path } }
+function Register-AIShopLaunchPath([string]$Path, [string]$Arguments) { Write-AIShopEvent @{ type='launch'; percent=0; message='已记录启动方式'; path=$Path; arguments=$Arguments } }
 function Complete-AIShopInstall() { Write-AIShopEvent @{ type='complete'; percent=100; message='安装完成' } }
 function Fail-AIShopInstall([string]$Message) { Write-AIShopEvent @{ type='error'; percent=0; message=$Message }; exit 1 }
 function Test-AIShopCancel() { if (Test-Path '.aishop-cancel') { throw '用户已取消操作' } }
@@ -134,5 +140,7 @@ function Test-AIShopCancel() { if (Test-Path '.aishop-cancel') { throw '用户�
         public string InstallLocation { get; set; }
         public string UninstallCommand { get; set; }
         public string UninstallArguments { get; set; }
+        public string LaunchPath { get; set; }
+        public string LaunchArguments { get; set; }
     }
 }
