@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Security;
@@ -10,7 +11,7 @@ namespace AIShop.Client.Services
     public static class CertificatePinning
     {
         private static string _host;
-        private static string _sha256;
+        private static HashSet<string> _pins;
         private static bool _configured;
 
         public static void Configure(string baseUrl, string pinnedSha256)
@@ -22,7 +23,11 @@ namespace AIShop.Client.Services
 
             var uri = new Uri(baseUrl);
             _host = uri.Host;
-            _sha256 = Normalize(pinnedSha256);
+            _pins = ParsePins(pinnedSha256);
+            if (_pins.Count == 0)
+            {
+                return;
+            }
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             ServicePointManager.ServerCertificateValidationCallback += Validate;
             _configured = true;
@@ -50,13 +55,22 @@ namespace AIShop.Client.Services
             using (var sha = SHA256.Create())
             {
                 var actual = BitConverter.ToString(sha.ComputeHash(cert.RawData)).Replace("-", "").ToLowerInvariant();
-                return string.Equals(actual, _sha256, StringComparison.OrdinalIgnoreCase);
+                return _pins.Contains(actual);
             }
+        }
+
+        private static HashSet<string> ParsePins(string value)
+        {
+            return new HashSet<string>(
+                value.Split(new[] { ',', ';', ' ', '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(Normalize)
+                    .Where(x => x.Length == 64),
+                StringComparer.OrdinalIgnoreCase);
         }
 
         private static string Normalize(string value)
         {
-            return new string(value.Where(Uri.IsHexDigit).ToArray()).ToLowerInvariant();
+            return new string((value ?? "").Where(Uri.IsHexDigit).ToArray()).ToLowerInvariant();
         }
     }
 }
