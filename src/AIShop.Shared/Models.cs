@@ -98,6 +98,7 @@ namespace AIShop.Shared
     {
         public string Id { get; set; }
         public string SoftwareId { get; set; }
+        public string Username { get; set; }
         public string Nickname { get; set; }
         public int Stars { get; set; }
         public string Comment { get; set; }

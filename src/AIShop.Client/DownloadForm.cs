@@ -11,7 +11,6 @@ namespace AIShop.Client
 {
     public sealed class DownloadForm : Form
     {
-        private readonly TextBox _status = new TextBox();
         private readonly ProgressBar _progress = new ProgressBar();
         private readonly Label _state = new Label();
         private readonly Label _bytes = new Label();
@@ -24,62 +23,52 @@ namespace AIShop.Client
         private readonly Func<ManagedDownloader, IProgress<ProgressSnapshot>, CancellationToken, Task> _operation;
         private readonly Stopwatch _watch = Stopwatch.StartNew();
         private bool _paused;
-        private string _lastLoggedMessage;
 
         private DownloadForm(string title, Func<ManagedDownloader, IProgress<ProgressSnapshot>, CancellationToken, Task> operation)
         {
             _operation = operation;
             Text = title;
             Width = 590;
-            Height = 355;
+            Height = 185;
             StartPosition = FormStartPosition.CenterParent;
             KeyPreview = true;
 
-            _status.Multiline = true;
-            _status.ReadOnly = true;
-            _status.ScrollBars = ScrollBars.Vertical;
-            _status.Left = 12;
-            _status.Top = 12;
-            _status.Width = 550;
-            _status.Height = 145;
-            Controls.Add(_status);
-
             _progress.Left = 12;
-            _progress.Top = 168;
+            _progress.Top = 12;
             _progress.Width = 550;
             _progress.Height = 24;
             Controls.Add(_progress);
 
             _state.Left = 12;
-            _state.Top = 202;
+            _state.Top = 46;
             _state.Width = 550;
             Controls.Add(_state);
 
             _bytes.Left = 12;
-            _bytes.Top = 226;
+            _bytes.Top = 70;
             _bytes.Width = 550;
             Controls.Add(_bytes);
 
             _speed.Left = 12;
-            _speed.Top = 250;
+            _speed.Top = 94;
             _speed.Width = 270;
             Controls.Add(_speed);
 
             _elapsed.Left = 292;
-            _elapsed.Top = 250;
+            _elapsed.Top = 94;
             _elapsed.Width = 270;
             Controls.Add(_elapsed);
 
             _pause.Text = "暂停";
             _pause.Left = 350;
-            _pause.Top = 280;
+            _pause.Top = 124;
             _pause.Width = 100;
             _pause.Click += (s, e) => TogglePause();
             Controls.Add(_pause);
 
             _cancel.Text = "取消";
             _cancel.Left = 462;
-            _cancel.Top = 280;
+            _cancel.Top = 124;
             _cancel.Width = 100;
             _cancel.Click += (s, e) => CancelOperation();
             Controls.Add(_cancel);
@@ -143,25 +132,32 @@ namespace AIShop.Client
             }
             catch (OperationCanceledException)
             {
-                AppendStatus("已取消。");
-                _pause.Enabled = false;
-                _cancel.Enabled = false;
+                Close();
             }
             catch (Exception ex)
             {
                 if (_cts.IsCancellationRequested)
                 {
-                    AppendStatus("已取消。");
-                    _pause.Enabled = false;
-                    _cancel.Enabled = false;
+                    Close();
                     return;
                 }
 
                 AppLog.Error("操作失败", ex);
-                AppendStatus("操作失败：" + ex.Message);
                 _pause.Enabled = false;
                 _cancel.Enabled = false;
+                MessageBox.Show(ex.Message, "操作失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Close();
             }
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (!_cts.IsCancellationRequested && _cancel.Enabled)
+            {
+                _cts.Cancel();
+            }
+
+            base.OnFormClosing(e);
         }
 
         private void UpdateProgress(ProgressSnapshot snapshot)
@@ -171,12 +167,6 @@ namespace AIShop.Client
             _bytes.Text = "大小：" + FormatProgress(snapshot.BytesTransferred, snapshot.TotalBytes);
             _speed.Text = "速度：" + FormatRate(snapshot.BytesPerSecond);
             _elapsed.Text = "耗时：" + _watch.Elapsed.ToString(@"hh\:mm\:ss");
-
-            if (!string.IsNullOrWhiteSpace(snapshot.Message) && snapshot.Message != _lastLoggedMessage)
-            {
-                AppendStatus(snapshot.Message);
-                _lastLoggedMessage = snapshot.Message;
-            }
 
             if (snapshot.IsCompleted || snapshot.IsFailed)
             {
@@ -192,13 +182,13 @@ namespace AIShop.Client
             {
                 _downloader.Pause();
                 _pause.Text = "继续";
-                AppendStatus("下载已暂停");
+                SetStatus("下载已暂停");
             }
             else
             {
                 _downloader.Resume();
                 _pause.Text = "暂停";
-                AppendStatus("继续下载");
+                SetStatus("继续下载");
             }
         }
 
@@ -206,13 +196,13 @@ namespace AIShop.Client
         {
             _cancel.Enabled = false;
             _pause.Enabled = false;
-            AppendStatus("正在取消...");
+            SetStatus("正在取消...");
             _cts.Cancel();
         }
 
-        private void AppendStatus(string message)
+        private void SetStatus(string message)
         {
-            _status.AppendText(message + Environment.NewLine);
+            _state.Text = "状态：" + message;
         }
 
         private static string FormatProgress(long transferred, long total)

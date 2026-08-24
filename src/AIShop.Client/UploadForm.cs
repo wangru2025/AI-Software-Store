@@ -12,7 +12,6 @@ namespace AIShop.Client
     {
         private readonly ApiCatalogService _catalog;
         private readonly string _zipPath;
-        private readonly TextBox _status = new TextBox();
         private readonly ProgressBar _progress = new ProgressBar();
         private readonly Label _state = new Label();
         private readonly Label _bytes = new Label();
@@ -21,7 +20,6 @@ namespace AIShop.Client
         private readonly Button _cancel = new Button();
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private readonly Stopwatch _watch = Stopwatch.StartNew();
-        private string _lastLoggedMessage;
         private bool _finished;
 
         public UploadForm(ApiCatalogService catalog, string zipPath)
@@ -31,48 +29,39 @@ namespace AIShop.Client
 
             Text = "正在上传";
             Width = 590;
-            Height = 330;
+            Height = 185;
             StartPosition = FormStartPosition.CenterParent;
             KeyPreview = true;
 
-            _status.Multiline = true;
-            _status.ReadOnly = true;
-            _status.ScrollBars = ScrollBars.Vertical;
-            _status.Left = 12;
-            _status.Top = 12;
-            _status.Width = 550;
-            _status.Height = 145;
-            Controls.Add(_status);
-
             _progress.Left = 12;
-            _progress.Top = 168;
+            _progress.Top = 12;
             _progress.Width = 550;
             _progress.Height = 24;
             Controls.Add(_progress);
 
             _state.Left = 12;
-            _state.Top = 202;
+            _state.Top = 46;
             _state.Width = 550;
             Controls.Add(_state);
 
             _bytes.Left = 12;
-            _bytes.Top = 226;
+            _bytes.Top = 70;
             _bytes.Width = 550;
             Controls.Add(_bytes);
 
             _speed.Left = 12;
-            _speed.Top = 250;
+            _speed.Top = 94;
             _speed.Width = 270;
             Controls.Add(_speed);
 
             _elapsed.Left = 292;
-            _elapsed.Top = 250;
+            _elapsed.Top = 94;
             _elapsed.Width = 270;
             Controls.Add(_elapsed);
 
             _cancel.Text = "取消";
             _cancel.Left = 462;
-            _cancel.Top = 280;
+            _cancel.Top = 124;
             _cancel.Width = 100;
             _cancel.Click += (s, e) => CancelUpload();
             Controls.Add(_cancel);
@@ -102,14 +91,15 @@ namespace AIShop.Client
             }
             catch (OperationCanceledException)
             {
-                AppendStatus("已取消。");
-                _cancel.Enabled = false;
+                Close();
             }
             catch (Exception ex)
             {
                 AppLog.Error("投稿失败", ex);
                 MessageBox.Show(FriendlyMessage(ex), "投稿失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 _cancel.Enabled = false;
+                _finished = true;
+                Close();
             }
         }
 
@@ -131,12 +121,6 @@ namespace AIShop.Client
             _speed.Text = "速度：" + FormatRate(snapshot.BytesPerSecond);
             _elapsed.Text = "耗时：" + _watch.Elapsed.ToString(@"hh\:mm\:ss");
 
-            if (!string.IsNullOrWhiteSpace(snapshot.Message) && snapshot.Message != _lastLoggedMessage)
-            {
-                AppendStatus(snapshot.Message);
-                _lastLoggedMessage = snapshot.Message;
-            }
-
             if (snapshot.IsCompleted || snapshot.IsFailed)
             {
                 _cancel.Enabled = false;
@@ -146,13 +130,13 @@ namespace AIShop.Client
         private void CancelUpload()
         {
             _cancel.Enabled = false;
-            AppendStatus("正在取消...");
+            SetStatus("正在取消...");
             _cts.Cancel();
         }
 
-        private void AppendStatus(string message)
+        private void SetStatus(string message)
         {
-            _status.AppendText(message + Environment.NewLine);
+            _state.Text = "状态：" + message;
         }
 
         private static string FriendlyMessage(Exception ex)

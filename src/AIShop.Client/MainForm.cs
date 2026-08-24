@@ -51,6 +51,12 @@ namespace AIShop.Client
                 {
                     await DownloadSelectedAsync();
                 }
+                else if (e.KeyCode == Keys.F5)
+                {
+                    RememberFocus();
+                    await RefreshSoftwareAsync();
+                    RestoreFocus();
+                }
             };
             Controls.Add(_list);
             _list.BringToFront();

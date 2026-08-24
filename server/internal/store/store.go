@@ -311,7 +311,7 @@ func (s *Store) PackageForDownload(ctx context.Context, softwareID, version stri
 
 func (s *Store) Ratings(ctx context.Context, softwareID string) ([]RatingItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		select r.id,r.software_id,u.nickname,r.stars,r.comment,r.created_at,
+		select r.id,r.software_id,u.username,u.nickname,r.stars,r.comment,r.created_at,
 		       (select count(*) from rating_replies rr where rr.rating_id=r.id)
 		from ratings r join users u on u.id=r.user_id
 		where r.software_id=$1 order by r.created_at desc`, softwareID)
@@ -322,7 +322,7 @@ func (s *Store) Ratings(ctx context.Context, softwareID string) ([]RatingItem, e
 	list := []RatingItem{}
 	for rows.Next() {
 		var item RatingItem
-		if err := rows.Scan(&item.Id, &item.SoftwareId, &item.Nickname, &item.Stars, &item.Comment, &item.CreatedAt, &item.ReplyCount); err != nil {
+		if err := rows.Scan(&item.Id, &item.SoftwareId, &item.Username, &item.Nickname, &item.Stars, &item.Comment, &item.CreatedAt, &item.ReplyCount); err != nil {
 			return nil, err
 		}
 		list = append(list, item)
@@ -331,12 +331,21 @@ func (s *Store) Ratings(ctx context.Context, softwareID string) ([]RatingItem, e
 }
 
 func (s *Store) SaveRating(ctx context.Context, userID int64, softwareID string, stars int, comment string) error {
+	if s.IsSoftwareOwner(ctx, userID, softwareID) {
+		return errors.New("开发者不能给自己的软件评分。")
+	}
+
 	id := randomID()
 	_, err := s.db.ExecContext(ctx, `
 		insert into ratings(id,software_id,user_id,stars,comment)
-		values($1,$2,$3,$4,$5)
-		on conflict(software_id,user_id) do update set stars=excluded.stars, comment=excluded.comment, updated_at=now()`,
+		values($1,$2,$3,$4,$5)`,
 		id, softwareID, userID, stars, comment)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "ratings_software_id_user_id_key" {
+			return errors.New("你已经给这个软件评过分。")
+		}
+	}
 	return err
 }
 

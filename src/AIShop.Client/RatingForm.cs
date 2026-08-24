@@ -13,6 +13,7 @@ namespace AIShop.Client
         private readonly ApiCatalogService _catalog;
         private readonly SoftwareItem _software;
         private readonly ListBox _list;
+        private readonly Button _publish;
         private readonly ContextMenuStrip _menu = new ContextMenuStrip();
         private IReadOnlyList<RatingItem> _ratings = new List<RatingItem>();
         private int _lastIndex;
@@ -27,9 +28,9 @@ namespace AIShop.Client
             StartPosition = FormStartPosition.CenterParent;
             FormTools.EnableEscClose(this);
 
-            var publish = FormTools.Button("发布评分", 12, 10, 110);
-            publish.Click += async (s, e) => await PublishAsync();
-            Controls.Add(publish);
+            _publish = FormTools.Button("发布评分", 12, 10, 110);
+            _publish.Click += async (s, e) => await PublishAsync();
+            Controls.Add(_publish);
 
             _list = new ListBox
             {
@@ -44,11 +45,16 @@ namespace AIShop.Client
 
             _menu.Items.Add("回复", null, async (s, e) => await ReplyAsync());
 
-            _list.KeyDown += (s, e) =>
+            _list.KeyDown += async (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
                 {
                     OpenReplies();
+                }
+                else if (e.KeyCode == Keys.F5)
+                {
+                    _lastIndex = Math.Max(0, _list.SelectedIndex);
+                    await RefreshAsync();
                 }
             };
             _list.DoubleClick += (s, e) => OpenReplies();
@@ -69,6 +75,7 @@ namespace AIShop.Client
                 {
                     _list.SelectedIndex = Math.Min(_lastIndex, _list.Items.Count - 1);
                 }
+                UpdatePublishButton();
             }
             catch (Exception ex)
             {
@@ -81,6 +88,18 @@ namespace AIShop.Client
             if (!_catalog.IsLoggedIn)
             {
                 MessageBox.Show("请先登录后再评分。", "评分");
+                return;
+            }
+
+            if (_catalog.IsDeveloper(_software))
+            {
+                MessageBox.Show("开发者不能给自己的软件评分。", "评分");
+                return;
+            }
+
+            if (HasCurrentUserRated())
+            {
+                MessageBox.Show("你已经给这个软件评过分。", "评分");
                 return;
             }
 
@@ -136,6 +155,30 @@ namespace AIShop.Client
         {
             var item = _list.SelectedItem as DisplayItem<RatingItem>;
             return item == null ? null : item.Value;
+        }
+
+        private void UpdatePublishButton()
+        {
+            _publish.Visible = !_catalog.IsLoggedIn || (!_catalog.IsDeveloper(_software) && !HasCurrentUserRated());
+        }
+
+        private bool HasCurrentUserRated()
+        {
+            var user = _catalog.CurrentUser;
+            if (user == null)
+            {
+                return false;
+            }
+
+            foreach (var rating in _ratings)
+            {
+                if (string.Equals(rating.Username, user.Username, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

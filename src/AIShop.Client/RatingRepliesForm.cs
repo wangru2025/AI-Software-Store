@@ -16,6 +16,7 @@ namespace AIShop.Client
         private readonly ListBox _list;
         private readonly ContextMenuStrip _menu = new ContextMenuStrip();
         private IReadOnlyList<RatingReply> _replies = new List<RatingReply>();
+        private int _lastIndex;
 
         public RatingRepliesForm(ApiCatalogService catalog, SoftwareItem software, RatingItem rating)
         {
@@ -32,6 +33,14 @@ namespace AIShop.Client
             _list.ContextMenuStrip = _menu;
             Controls.Add(_list);
             _menu.Items.Add("回复", null, async (s, e) => await ReplyAsync());
+            _list.KeyDown += async (s, e) =>
+            {
+                if (e.KeyCode == Keys.F5)
+                {
+                    _lastIndex = Math.Max(0, _list.SelectedIndex);
+                    await RefreshAsync();
+                }
+            };
             Load += async (s, e) => await RefreshAsync();
         }
 
@@ -48,7 +57,7 @@ namespace AIShop.Client
                 }
                 if (_list.Items.Count > 0)
                 {
-                    _list.SelectedIndex = 0;
+                    _list.SelectedIndex = Math.Min(_lastIndex, _list.Items.Count - 1);
                 }
             }
             catch (Exception ex)

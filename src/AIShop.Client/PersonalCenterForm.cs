@@ -23,14 +23,26 @@ namespace AIShop.Client
 
             _list = FormTools.ListBox();
             Controls.Add(_list);
-            Load += (s, e) => RefreshItems();
+            Load += async (s, e) => await RefreshAsync();
             _list.KeyDown += async (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
                 {
                     await OpenSelectedAsync();
                 }
+                else if (e.KeyCode == Keys.F5)
+                {
+                    RememberFocus();
+                    await RefreshAsync();
+                    RestoreFocus();
+                }
             };
+        }
+
+        private async Task RefreshAsync()
+        {
+            await _catalog.RefreshCurrentUserAsync();
+            RefreshItems();
         }
 
         private void RefreshItems()

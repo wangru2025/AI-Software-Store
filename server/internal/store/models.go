@@ -50,6 +50,7 @@ type ChangelogEntry struct {
 type RatingItem struct {
 	Id         string    `json:"Id"`
 	SoftwareId string    `json:"SoftwareId"`
+	Username   string    `json:"Username"`
 	Nickname   string    `json:"Nickname"`
 	Stars      int       `json:"Stars"`
 	Comment    string    `json:"Comment"`

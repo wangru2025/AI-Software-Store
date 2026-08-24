@@ -33,11 +33,16 @@ namespace AIShop.Client
             _menu.Items.Add("上架 / 转草稿", null, async (s, e) => await ToggleAsync());
             _menu.Items.Add("编辑", null, async (s, e) => await EditAsync());
 
-            _list.KeyDown += (s, e) =>
+            _list.KeyDown += async (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter && _list.SelectedItem != null)
                 {
                     _menu.Show(_list, _list.PointToClient(Cursor.Position));
+                }
+                else if (e.KeyCode == Keys.F5)
+                {
+                    _lastIndex = Math.Max(0, _list.SelectedIndex);
+                    await RefreshAsync();
                 }
             };
 
