@@ -8,6 +8,11 @@ namespace AIShop.Updater
         [STAThread]
         private static void Main(string[] args)
         {
+            if (args == null || args.Length == 0)
+            {
+                return;
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new UpdateForm(UpdateArguments.Parse(args)));
