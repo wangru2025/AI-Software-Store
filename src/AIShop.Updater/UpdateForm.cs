@@ -82,6 +82,8 @@ namespace AIShop.Updater
                 if (!string.IsNullOrWhiteSpace(_args.RestartExe) && File.Exists(_args.RestartExe))
                 {
                     Process.Start(_args.RestartExe);
+                    Close();
+                    return;
                 }
                 _cancel.Enabled = false;
             }
