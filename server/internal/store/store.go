@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
@@ -271,7 +273,76 @@ func (s *Store) SaveSubmission(ctx context.Context, userID int64, manifest Manif
 		}
 		return err
 	}
-	return tx.Commit()
+	stalePackagePaths, err := stalePackageFiles(ctx, tx, manifest.ID, 3)
+	if err != nil {
+		return err
+	}
+
+	if err := pruneSoftwareVersions(ctx, tx, manifest.ID, stalePackagePaths); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	removePackageFiles(stalePackagePaths)
+	return nil
+}
+
+func stalePackageFiles(ctx context.Context, tx *sql.Tx, softwareID string, keep int) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		select package_path
+		from software_versions
+		where software_id=$1
+		order by coalesce(published_at, created_at) desc, id desc
+		offset $2`, softwareID, keep)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var packagePath string
+		if err := rows.Scan(&packagePath); err != nil {
+			return nil, err
+		}
+		if packagePath != "" {
+			paths = append(paths, packagePath)
+		}
+	}
+	return paths, rows.Err()
+}
+
+func pruneSoftwareVersions(ctx context.Context, tx *sql.Tx, softwareID string, packagePaths []string) error {
+	for _, packagePath := range packagePaths {
+		if _, err := tx.ExecContext(ctx, `delete from software_versions where software_id=$1 and package_path=$2`, softwareID, packagePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removePackageFiles(packagePaths []string) {
+	for _, packagePath := range packagePaths {
+		if packagePath == "" {
+			continue
+		}
+		if err := os.Remove(packagePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		removeEmptyParents(filepath.Dir(packagePath), 2)
+	}
+}
+
+func removeEmptyParents(dir string, depth int) {
+	for i := 0; i < depth && dir != "." && dir != string(filepath.Separator); i++ {
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
 }
 
 func (s *Store) ToggleSubmissionStatus(ctx context.Context, userID int64, softwareID string) error {
