@@ -149,7 +149,7 @@ func (s *Store) ChangePassword(ctx context.Context, user User, oldPassword, newP
 
 func (s *Store) ListPublishedSoftware(ctx context.Context) ([]SoftwareItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		select sw.id, sw.name, latest.version, u.username, sw.summary, coalesce(latest.published_at, latest.created_at), latest.download_count, latest.sha256, latest.status
+		select sw.id, sw.name, latest.version, u.username, sw.summary, coalesce(latest.published_at, latest.created_at), stats.download_count, latest.sha256, latest.status
 		from software sw
 		join users u on u.id=sw.owner_user_id
 		join lateral (
@@ -158,6 +158,11 @@ func (s *Store) ListPublishedSoftware(ctx context.Context) ([]SoftwareItem, erro
 			order by coalesce(v.published_at, v.created_at) desc
 			limit 1
 		) latest on true
+		join lateral (
+			select coalesce(max(v.download_count), 0) as download_count
+			from software_versions v
+			where v.software_id=sw.id
+		) stats on true
 		where sw.deleted_at is null
 		order by coalesce(latest.published_at, latest.created_at) desc`)
 	if err != nil {
@@ -180,12 +185,17 @@ func (s *Store) ListPublishedSoftware(ctx context.Context) ([]SoftwareItem, erro
 func (s *Store) Software(ctx context.Context, id string) (SoftwareItem, error) {
 	var item SoftwareItem
 	err := s.db.QueryRowContext(ctx, `
-		select sw.id, sw.name, latest.version, u.username, sw.summary, coalesce(latest.published_at, latest.created_at), latest.download_count, latest.sha256, latest.status
+		select sw.id, sw.name, latest.version, u.username, sw.summary, coalesce(latest.published_at, latest.created_at), stats.download_count, latest.sha256, latest.status
 		from software sw
 		join users u on u.id=sw.owner_user_id
 		join lateral (
 			select * from software_versions v where v.software_id=sw.id order by coalesce(v.published_at, v.created_at) desc limit 1
 		) latest on true
+		join lateral (
+			select coalesce(max(v.download_count), 0) as download_count
+			from software_versions v
+			where v.software_id=sw.id
+		) stats on true
 		where sw.id=$1 and sw.deleted_at is null`, id).Scan(&item.Id, &item.Name, &item.Version, &item.Author, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.PackageSha256, &item.Status)
 	if err != nil {
 		return item, err
@@ -214,7 +224,7 @@ func (s *Store) Changelogs(ctx context.Context, softwareID string) ([]ChangelogE
 
 func (s *Store) MySubmissions(ctx context.Context, userID int64) ([]SubmissionItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		select sw.id, sw.name, v.version, sw.summary, coalesce(v.published_at, v.created_at), v.download_count, v.status
+		select sw.id, sw.name, v.version, sw.summary, coalesce(v.published_at, v.created_at), stats.download_count, v.status
 		from software sw
 		join lateral (
 			select * from software_versions v
@@ -222,6 +232,11 @@ func (s *Store) MySubmissions(ctx context.Context, userID int64) ([]SubmissionIt
 			order by coalesce(v.published_at, v.created_at) desc, v.id desc
 			limit 1
 		) v on true
+		join lateral (
+			select coalesce(max(v.download_count), 0) as download_count
+			from software_versions v
+			where v.software_id=sw.id
+		) stats on true
 		where sw.owner_user_id=$1 and sw.deleted_at is null
 		order by coalesce(v.published_at, v.created_at) desc`, userID)
 	if err != nil {
@@ -261,6 +276,7 @@ func (s *Store) SaveSubmission(ctx context.Context, userID int64, manifest Manif
 		return errors.New("这个软件 id 已被其它投稿者使用")
 	}
 	existingSoftware := err == nil
+	carriedDownloadCount := 0
 
 	var nameOwnerID int64
 	err = tx.QueryRowContext(ctx, `select owner_user_id from software where lower(name)=lower($1) and deleted_at is null limit 1`, manifest.Name).Scan(&nameOwnerID)
@@ -274,10 +290,12 @@ func (s *Store) SaveSubmission(ctx context.Context, userID int64, manifest Manif
 	if existingSoftware {
 		var latestVersion string
 		err = tx.QueryRowContext(ctx, `
-			select version from software_versions
+			select version,
+			       coalesce((select max(download_count) from software_versions where software_id=$1), 0)
+			from software_versions
 			where software_id=$1
 			order by coalesce(published_at, created_at) desc, id desc
-			limit 1`, manifest.ID).Scan(&latestVersion)
+			limit 1`, manifest.ID).Scan(&latestVersion, &carriedDownloadCount)
 		if err != nil {
 			return err
 		}
@@ -295,9 +313,9 @@ func (s *Store) SaveSubmission(ctx context.Context, userID int64, manifest Manif
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
-		insert into software_versions(software_id, version, manifest_json, package_path, sha256, changelog, status, published_at)
-		values($1,$2,$3,$4,$5,$6,$7,$8)`,
-		manifest.ID, manifest.Version, string(manifestJSON), packagePath, sha256, changelog, submissionStatus(existingSoftware), submissionPublishedAt(existingSoftware))
+		insert into software_versions(software_id, version, manifest_json, package_path, sha256, changelog, status, published_at, download_count)
+		values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		manifest.ID, manifest.Version, string(manifestJSON), packagePath, sha256, changelog, submissionStatus(existingSoftware), submissionPublishedAt(existingSoftware), carriedDownloadCount)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "software_versions_software_id_version_key" {
@@ -457,7 +475,13 @@ func (s *Store) PackageForDownload(ctx context.Context, softwareID, version stri
 	if err != nil {
 		return "", err
 	}
-	_, _ = s.db.ExecContext(ctx, `update software_versions set download_count=download_count+1 where software_id=$1 and version=$2`, softwareID, version)
+	_, _ = s.db.ExecContext(ctx, `
+		update software_versions target
+		set download_count = greatest(
+			target.download_count,
+			coalesce((select max(v.download_count) from software_versions v where v.software_id=$1), 0)
+		) + 1
+		where target.software_id=$1 and target.version=$2`, softwareID, version)
 	_, _ = s.db.ExecContext(ctx, `insert into download_records(software_id, version) values($1,$2)`, softwareID, version)
 	return path, nil
 }
