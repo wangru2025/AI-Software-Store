@@ -28,12 +28,15 @@ namespace AIShop.Client
                     "- aishop.json\r\n" +
                     "- install.ps1\r\n" +
                     "- CHANGELOG.txt\r\n" +
+                    "这些必需文件必须直接位于压缩包根目录，不能放在二级文件夹里。例如打开 zip 后应直接看到 aishop.json，而不是先看到某个目录。\r\n" +
                     "\r\n" +
                     "可选文件：\r\n" +
                     "- uninstall.ps1\r\n" +
                     "- update.ps1\r\n" +
                     "- README.txt / README.md\r\n" +
                     "- 其它安装所需文件\r\n" +
+                    "\r\n" +
+                    "由于服务器带宽有限，建议把较大的安装程序上传到 GitCode 或其它可靠平台，投稿 zip 内只存放 aishop.json、CHANGELOG.txt 和部署脚本；install.ps1 在执行部署流程时自行下载并安装真实程序包。\r\n" +
                     "\r\n" +
                     "二、aishop.json 字段\r\n" +
                     "示例：\r\n" +
