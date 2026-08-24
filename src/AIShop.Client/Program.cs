@@ -16,7 +16,13 @@ namespace AIShop.Client
             var baseUrl = ConfigurationManager.AppSettings["ApiBaseUrl"] ?? "http://localhost:8080";
             var pinnedCertificateSha256 = ConfigurationManager.AppSettings["ApiPinnedCertificateSha256"];
             CertificatePinning.Configure(baseUrl, pinnedCertificateSha256);
-            var catalog = new ApiCatalogService(baseUrl);
+            var authStore = new AuthStore();
+            var catalog = new ApiCatalogService(baseUrl, authStore);
+            var persisted = authStore.Load();
+            if (persisted != null)
+            {
+                catalog.RestoreSession(persisted.Token, persisted.User);
+            }
             Application.Run(new MainForm(catalog));
         }
     }

@@ -40,6 +40,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/auth/register", s.handleRegister)
 	mux.HandleFunc("/api/auth/login", s.handleLogin)
+	mux.HandleFunc("/api/me", s.withAuth(s.handleMe))
 	mux.HandleFunc("/api/me/profile", s.withAuth(s.handleProfile))
 	mux.HandleFunc("/api/me/password", s.withAuth(s.handlePassword))
 	mux.HandleFunc("/api/me/submissions", s.withAuth(s.handleMySubmissions))
@@ -91,6 +92,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"Token": token, "User": user})
+}
+
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, user store.User) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, store.UserSession{Username: user.Username, Nickname: user.Nickname})
 }
 
 func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -408,7 +417,8 @@ func (s *Server) handleClientUpdate(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	hasUpdate := s.cfg.ClientUpdateURL != ""
+	currentVersion := r.URL.Query().Get("currentVersion")
+	hasUpdate := s.cfg.ClientUpdateURL != "" && versionLess(currentVersion, s.cfg.ClientVersion)
 	writeJSON(w, map[string]any{
 		"HasUpdate":   hasUpdate,
 		"Version":     s.cfg.ClientVersion,
@@ -416,6 +426,45 @@ func (s *Server) handleClientUpdate(w http.ResponseWriter, r *http.Request) {
 		"DownloadUrl": s.cfg.ClientUpdateURL,
 		"Sha256":      s.cfg.ClientUpdateHash,
 	})
+}
+
+func versionLess(current, latest string) bool {
+	if strings.TrimSpace(current) == "" {
+		return true
+	}
+	currentParts := strings.Split(current, ".")
+	latestParts := strings.Split(latest, ".")
+	max := len(currentParts)
+	if len(latestParts) > max {
+		max = len(latestParts)
+	}
+	for i := 0; i < max; i++ {
+		var c, l int
+		if i < len(currentParts) {
+			c = atoiSafe(currentParts[i])
+		}
+		if i < len(latestParts) {
+			l = atoiSafe(latestParts[i])
+		}
+		if c < l {
+			return true
+		}
+		if c > l {
+			return false
+		}
+	}
+	return false
+}
+
+func atoiSafe(value string) int {
+	n := 0
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			break
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
 }
 
 func (s *Server) withAuth(next func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {

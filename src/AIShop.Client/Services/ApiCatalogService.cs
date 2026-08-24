@@ -14,12 +14,14 @@ namespace AIShop.Client.Services
     public sealed class ApiCatalogService
     {
         private readonly HttpClient _http;
+        private readonly AuthStore _authStore;
         private string _token;
         private UserSession _session;
 
-        public ApiCatalogService(string baseUrl)
+        public ApiCatalogService(string baseUrl, AuthStore authStore)
         {
             _http = new HttpClient { BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/") };
+            _authStore = authStore;
         }
 
         public UserSession CurrentUser => _session;
@@ -61,27 +63,60 @@ namespace AIShop.Client.Services
         public async Task LoginAsync(string username, string password)
         {
             var response = await PostAsync<AuthResponse>("api/auth/login", new { username, password }).ConfigureAwait(false);
-            _token = response.Token;
-            _session = response.User;
+            SetSession(response.Token, response.User, true);
         }
 
         public async Task RegisterAsync(string username, string nickname, string password)
         {
             var response = await PostAsync<AuthResponse>("api/auth/register", new { username, nickname, password }).ConfigureAwait(false);
-            _token = response.Token;
-            _session = response.User;
+            SetSession(response.Token, response.User, true);
         }
 
         public void Logout()
         {
             _token = null;
             _session = null;
+            _authStore?.Clear();
+        }
+
+        public void RestoreSession(string token, UserSession user)
+        {
+            _token = token;
+            _session = user;
+        }
+
+        public async Task<bool> RefreshCurrentUserAsync()
+        {
+            if (!IsLoggedIn)
+            {
+                return false;
+            }
+
+            try
+            {
+                var user = await GetAsync<UserSession>("api/me").ConfigureAwait(false);
+                _session = user;
+                _authStore?.Save(_token, _session);
+                return true;
+            }
+            catch
+            {
+                Logout();
+                return false;
+            }
         }
 
         public Task UpdateProfileAsync(string username, string nickname)
         {
-            _session = new UserSession { Username = username, Nickname = nickname };
-            return PostAsync<object>("api/me/profile", new { username, nickname });
+            return PostAsync<object>("api/me/profile", new { username, nickname }).ContinueWith(task =>
+            {
+                if (!task.IsFaulted && !task.IsCanceled)
+                {
+                    _session = new UserSession { Username = username, Nickname = nickname };
+                    _authStore?.Save(_token, _session);
+                }
+                return task;
+            }).Unwrap();
         }
 
         public Task ChangePasswordAsync(string oldPassword, string newPassword, string repeatedPassword)
@@ -114,6 +149,11 @@ namespace AIShop.Client.Services
             return PostAsync<object>("api/me/submissions/" + Uri.EscapeDataString(softwareId) + "/delete", new { });
         }
 
+        public Task<UserSession> GetCurrentUserAsync()
+        {
+            return GetAsync<UserSession>("api/me");
+        }
+
         public async Task UploadSubmissionAsync(string zipPath)
         {
             using (var content = new MultipartFormDataContent())
@@ -126,9 +166,9 @@ namespace AIShop.Client.Services
             }
         }
 
-        public Task<ClientUpdateInfo> CheckClientUpdateAsync()
+        public Task<ClientUpdateInfo> CheckClientUpdateAsync(string currentVersion)
         {
-            return GetAsync<ClientUpdateInfo>("api/client/update");
+            return GetAsync<ClientUpdateInfo>("api/client/update?currentVersion=" + Uri.EscapeDataString(currentVersion ?? ""));
         }
 
         public string BuildDownloadUrl(string softwareId, string version)
@@ -146,6 +186,16 @@ namespace AIShop.Client.Services
             var payload = JsonConvert.SerializeObject(body);
             var content = new StringContent(payload, Encoding.UTF8, "application/json");
             return SendAsync<T>(HttpMethod.Post, path, content);
+        }
+
+        private void SetSession(string token, UserSession user, bool persist)
+        {
+            _token = token;
+            _session = user;
+            if (persist)
+            {
+                _authStore?.Save(_token, _session);
+            }
         }
 
         private async Task<T> SendAsync<T>(HttpMethod method, string path, HttpContent content)

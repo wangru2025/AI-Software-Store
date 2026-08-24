@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Drawing;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -56,7 +57,11 @@ namespace AIShop.Client
 
             BuildContextMenu();
             BuildTray();
-            Load += async (s, e) => await RefreshSoftwareAsync();
+            Load += async (s, e) =>
+            {
+                await _catalog.RefreshCurrentUserAsync();
+                await RefreshSoftwareAsync();
+            };
             Resize += (s, e) =>
             {
                 if (WindowState == FormWindowState.Minimized)
@@ -210,7 +215,8 @@ namespace AIShop.Client
         {
             try
             {
-                var update = await _catalog.CheckClientUpdateAsync();
+                var currentVersion = ConfigurationManager.AppSettings["ClientVersion"] ?? "0.0.0";
+                var update = await _catalog.CheckClientUpdateAsync(currentVersion);
                 if (update == null || !update.HasUpdate)
                 {
                     MessageBox.Show("当前已是最新版本。", "检查更新");
