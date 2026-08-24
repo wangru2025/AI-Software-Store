@@ -35,15 +35,38 @@ namespace AIShop.Client.Services
             var list = ReadAll().ToList();
             list.RemoveAll(x => string.Equals(x.Id, package.Id, StringComparison.OrdinalIgnoreCase));
             list.Add(package);
-            Directory.CreateDirectory(Path.GetDirectoryName(_path));
-            File.WriteAllText(_path, JsonConvert.SerializeObject(list, Formatting.Indented));
+            WriteAll(list);
         }
 
         public void Remove(string id)
         {
+            try
+            {
+                RemoveLocal(id);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                if (PackageInstaller.IsAdministrator())
+                {
+                    throw;
+                }
+
+                ElevatedInstallWorker.RemoveInstalledRecord(id);
+            }
+        }
+
+        public void RemoveLocal(string id)
+        {
             var list = ReadAll().Where(x => !string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)).ToList();
+            WriteAll(list);
+        }
+
+        private void WriteAll(IReadOnlyList<InstalledPackage> list)
+        {
             Directory.CreateDirectory(Path.GetDirectoryName(_path));
+            AppDataSecurity.EnsureUsersCanModifyFile(_path);
             File.WriteAllText(_path, JsonConvert.SerializeObject(list, Formatting.Indented));
+            AppDataSecurity.EnsureUsersCanModifyFile(_path);
         }
     }
 }

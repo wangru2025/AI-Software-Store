@@ -16,6 +16,7 @@ namespace AIShop.Client.Services
     public static class ElevatedInstallWorker
     {
         private const string WorkerSwitch = "--install-worker";
+        private const string RecordWorkerSwitch = "--record-worker";
 
         public static async Task InstallAsync(string zipPath, IProgress<ProgressSnapshot> progress, CancellationToken cancellationToken)
         {
@@ -38,6 +39,13 @@ namespace AIShop.Client.Services
         public static bool TryRunFromCommandLine(string[] args)
         {
             var parsed = ParseArgs(args);
+            if (parsed.ContainsKey(RecordWorkerSwitch))
+            {
+                var id = Value(parsed, "--remove-installed");
+                new InstalledPackageStore().RemoveLocal(id);
+                return true;
+            }
+
             if (!parsed.ContainsKey(WorkerSwitch))
             {
                 return false;
@@ -48,6 +56,30 @@ namespace AIShop.Client.Services
             var nonce = Value(parsed, "--nonce");
             RunWorkerAsync(zipPath, pipeName, nonce).GetAwaiter().GetResult();
             return true;
+        }
+
+        public static void RemoveInstalledRecord(string id)
+        {
+            try
+            {
+                using (var process = StartElevatedProcess(RecordWorkerSwitch + " --remove-installed " + Quote(id)))
+                {
+                    process.WaitForExit();
+                    if (process.ExitCode != 0)
+                    {
+                        throw new InvalidOperationException("卸载已完成，但清理本地安装记录失败。");
+                    }
+                }
+            }
+            catch (Win32Exception ex)
+            {
+                if (ex.NativeErrorCode == 1223)
+                {
+                    throw new OperationCanceledException("用户取消了管理员权限请求。", ex);
+                }
+
+                throw;
+            }
         }
 
         private static async Task RunElevatedAsync(string zipPath, IProgress<ProgressSnapshot> progress, CancellationToken cancellationToken)
@@ -121,20 +153,7 @@ namespace AIShop.Client.Services
         {
             try
             {
-                var process = Process.Start(new ProcessStartInfo
-                {
-                    FileName = Application.ExecutablePath,
-                    Arguments = BuildWorkerArguments(zipPath, pipeName, nonce),
-                    UseShellExecute = true,
-                    Verb = "runas",
-                    WindowStyle = ProcessWindowStyle.Hidden
-                });
-                if (process == null)
-                {
-                    throw new InvalidOperationException("管理员安装进程没有正常启动。");
-                }
-
-                return process;
+                return StartElevatedProcess(BuildWorkerArguments(zipPath, pipeName, nonce));
             }
             catch (Win32Exception ex)
             {
@@ -145,6 +164,24 @@ namespace AIShop.Client.Services
 
                 throw;
             }
+        }
+
+        private static Process StartElevatedProcess(string arguments)
+        {
+            var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = Application.ExecutablePath,
+                Arguments = arguments,
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+            if (process == null)
+            {
+                throw new InvalidOperationException("管理员进程没有正常启动。");
+            }
+
+            return process;
         }
 
         private static async Task RunWorkerAsync(string zipPath, string pipeName, string nonce)
