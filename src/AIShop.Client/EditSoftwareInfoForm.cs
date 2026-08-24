@@ -12,6 +12,7 @@ namespace AIShop.Client
         private readonly ApiCatalogService _catalog;
         private readonly SubmissionItem _item;
         private readonly TextBox _name;
+        private readonly ComboBox _category = new ComboBox();
         private readonly TextBox _summary;
 
         public EditSoftwareInfoForm(ApiCatalogService catalog, SubmissionItem item)
@@ -29,8 +30,25 @@ namespace AIShop.Client
             _name.Text = item.Name;
             Controls.Add(_name);
 
-            Controls.Add(FormTools.Label("简介", 20, 60));
-            _summary = FormTools.TextBox("", 120, 58, 380, false, true);
+            Controls.Add(FormTools.Label("分类", 20, 60));
+            _category.Left = 120;
+            _category.Top = 58;
+            _category.Width = 180;
+            _category.DropDownStyle = ComboBoxStyle.DropDownList;
+            foreach (var category in SoftwareCategories.Values)
+            {
+                _category.Items.Add(category);
+            }
+            var selectedCategory = SoftwareCategories.IsValid(item.Category) ? item.Category : SoftwareCategories.Default;
+            _category.SelectedItem = selectedCategory;
+            if (_category.SelectedIndex < 0)
+            {
+                _category.SelectedIndex = 0;
+            }
+            Controls.Add(_category);
+
+            Controls.Add(FormTools.Label("简介", 20, 96));
+            _summary = FormTools.TextBox("", 120, 94, 380, false, true);
             _summary.Text = item.Summary;
             Controls.Add(_summary);
 
@@ -46,7 +64,7 @@ namespace AIShop.Client
         {
             try
             {
-                await _catalog.UpdateSoftwareInfoAsync(_item.SoftwareId, _name.Text, _summary.Text);
+                await _catalog.UpdateSoftwareInfoAsync(_item.SoftwareId, _name.Text, _summary.Text, _category.SelectedItem as string);
                 MessageBox.Show("保存成功。", "编辑投稿");
                 Close();
             }

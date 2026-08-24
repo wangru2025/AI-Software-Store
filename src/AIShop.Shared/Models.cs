@@ -25,6 +25,7 @@ namespace AIShop.Shared
         public string Name { get; set; }
         public string Version { get; set; }
         public string Author { get; set; }
+        public string Category { get; set; }
         public string Summary { get; set; }
         public DateTime PublishedAt { get; set; }
         public int DownloadCount { get; set; }
@@ -57,6 +58,7 @@ namespace AIShop.Shared
         public string SoftwareId { get; set; }
         public string Name { get; set; }
         public string Version { get; set; }
+        public string Category { get; set; }
         public string Summary { get; set; }
         public DateTime PublishedAt { get; set; }
         public int DownloadCount { get; set; }
@@ -152,6 +154,7 @@ namespace AIShop.Shared
         public string name { get; set; }
         public string version { get; set; }
         public string author { get; set; }
+        public string category { get; set; }
         public string summary { get; set; }
         public bool requiresAdmin { get; set; }
         public string install { get; set; }
@@ -196,6 +199,40 @@ namespace AIShop.Shared
             }
 
             return Math.Round(list.Average(x => x.Stars), 1, MidpointRounding.AwayFromZero);
+        }
+    }
+
+    public static class SoftwareCategories
+    {
+        public const string All = "全部软件";
+        public const string Default = "应用软件";
+
+        public static readonly string[] Values =
+        {
+            "应用软件",
+            "盲用辅助",
+            "编程开发",
+            "连洛聊天",
+            "媒体工具",
+            "网络工具",
+            "文字处理",
+            "系统工具",
+            "语音库",
+            "音视频处理",
+            "游戏娱乐"
+        };
+
+        public static bool IsValid(string value)
+        {
+            foreach (var category in Values)
+            {
+                if (string.Equals(category, value, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

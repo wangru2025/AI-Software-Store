@@ -87,6 +87,7 @@ namespace AIShop.Client
             _menu.Opening += (s, e) =>
             {
                 var task = SelectedTask();
+                _menu.Items[0].Enabled = task != null && !task.IsFinished;
                 _menu.Items[1].Enabled = task != null && !task.IsFinished && !task.IsPaused;
                 _menu.Items[2].Enabled = task != null && !task.IsFinished && task.IsPaused;
                 _menu.Items[3].Enabled = task != null && !task.IsFinished;
@@ -112,13 +113,12 @@ namespace AIShop.Client
         private void OpenSelected()
         {
             var task = SelectedTask();
-            if (task == null)
+            if (task == null || task.IsFinished)
             {
                 return;
             }
 
-            var form = DownloadForm.ForTask(task);
-            form.Show(this);
+            DownloadForm.ShowTask(task, this);
         }
 
         private BackgroundTask SelectedTask()

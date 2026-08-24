@@ -144,9 +144,9 @@ namespace AIShop.Client.Services
             return PostAsync<object>("api/me/submissions/" + Uri.EscapeDataString(softwareId) + "/toggle-status", new { });
         }
 
-        public Task UpdateSoftwareInfoAsync(string softwareId, string name, string summary)
+        public Task UpdateSoftwareInfoAsync(string softwareId, string name, string summary, string category)
         {
-            return PostAsync<object>("api/me/submissions/" + Uri.EscapeDataString(softwareId), new { name, summary });
+            return PostAsync<object>("api/me/submissions/" + Uri.EscapeDataString(softwareId), new { name, summary, category });
         }
 
         public Task DeleteSubmissionAsync(string softwareId)
@@ -247,6 +247,15 @@ namespace AIShop.Client.Services
                     string.IsNullOrWhiteSpace(manifest.summary))
                 {
                     throw new ApiException("aishop.json 必须填写 id、name、version、summary。");
+                }
+
+                if (string.IsNullOrWhiteSpace(manifest.category))
+                {
+                    throw new ApiException("aishop.json 必须填写 category。");
+                }
+                if (!SoftwareCategories.IsValid(manifest.category))
+                {
+                    throw new ApiException("aishop.json 的 category 必须是允许的分类。");
                 }
 
                 var install = string.IsNullOrWhiteSpace(manifest.install) ? "install.ps1" : manifest.install;

@@ -315,8 +315,9 @@ func (s *Server) handleSubmissionAction(w http.ResponseWriter, r *http.Request, 
 	}
 	if len(parts) == 1 {
 		var req struct {
-			Name    string `json:"name"`
-			Summary string `json:"summary"`
+			Name     string `json:"name"`
+			Summary  string `json:"summary"`
+			Category string `json:"category"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -325,7 +326,11 @@ func (s *Server) handleSubmissionAction(w http.ResponseWriter, r *http.Request, 
 			fail(w, http.StatusBadRequest, "软件名称和简介不能为空。")
 			return
 		}
-		if err := s.store.UpdateSoftwareInfo(r.Context(), user.ID, parts[0], req.Name, req.Summary); err != nil {
+		if !validCategory(req.Category) {
+			fail(w, http.StatusBadRequest, "软件分类不正确。")
+			return
+		}
+		if err := s.store.UpdateSoftwareInfo(r.Context(), user.ID, parts[0], req.Name, req.Summary, req.Category); err != nil {
 			fail(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -519,6 +524,12 @@ func validatePackage(zipPath string) (store.Manifest, string, error) {
 	if manifest.ID == "" || manifest.Name == "" || manifest.Version == "" || manifest.Summary == "" {
 		return store.Manifest{}, "", errors.New("id、name、version、summary 必填。")
 	}
+	if strings.TrimSpace(manifest.Category) == "" {
+		return store.Manifest{}, "", errors.New("category 必填。")
+	}
+	if !validCategory(manifest.Category) {
+		return store.Manifest{}, "", errors.New("category 必须是允许的分类。")
+	}
 	if manifest.Install == "" {
 		manifest.Install = "install.ps1"
 	}
@@ -602,6 +613,15 @@ func readTextFromZip(file *zip.File, limit int64) (string, error) {
 
 func isRootFile(value string) bool {
 	return value != "" && !strings.Contains(value, "/") && !strings.Contains(value, "\\")
+}
+
+func validCategory(category string) bool {
+	switch strings.TrimSpace(category) {
+	case "应用软件", "盲用辅助", "编程开发", "连洛聊天", "媒体工具", "网络工具", "文字处理", "系统工具", "语音库", "音视频处理", "游戏娱乐":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateAccount(w http.ResponseWriter, username, nickname, password string) bool {

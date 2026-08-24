@@ -19,6 +19,7 @@ type SoftwareItem struct {
 	Name          string           `json:"Name"`
 	Version       string           `json:"Version"`
 	Author        string           `json:"Author"`
+	Category      string           `json:"Category"`
 	Summary       string           `json:"Summary"`
 	PublishedAt   time.Time        `json:"PublishedAt"`
 	DownloadCount int              `json:"DownloadCount"`
@@ -33,6 +34,7 @@ type SubmissionItem struct {
 	SoftwareId    string    `json:"SoftwareId"`
 	Name          string    `json:"Name"`
 	Version       string    `json:"Version"`
+	Category      string    `json:"Category"`
 	Summary       string    `json:"Summary"`
 	PublishedAt   time.Time `json:"PublishedAt"`
 	DownloadCount int       `json:"DownloadCount"`
@@ -72,6 +74,7 @@ type Manifest struct {
 	Name          string `json:"name"`
 	Version       string `json:"version"`
 	Author        string `json:"author"`
+	Category      string `json:"category"`
 	Summary       string `json:"summary"`
 	RequiresAdmin bool   `json:"requiresAdmin"`
 	Install       string `json:"install"`

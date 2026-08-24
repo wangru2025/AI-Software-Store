@@ -15,12 +15,17 @@ namespace AIShop.Client
         private readonly ApiCatalogService _catalog;
         private readonly InstalledPackageStore _installed = new InstalledPackageStore();
         private readonly PackageInstaller _launcher = new PackageInstaller();
+        private readonly ComboBox _category;
         private readonly ListBox _list;
+        private readonly TextBox _search;
+        private readonly Button _searchButton;
         private readonly ContextMenuStrip _softwareMenu = new ContextMenuStrip();
         private readonly ToolStripMenuItem _primarySoftwareAction = new ToolStripMenuItem();
         private readonly ToolStripMenuItem _uninstallAction = new ToolStripMenuItem();
         private readonly NotifyIcon _trayIcon = new NotifyIcon();
         private IReadOnlyList<SoftwareItem> _items = new List<SoftwareItem>();
+        private string _loadedCategory = SoftwareCategories.All;
+        private string _searchKeyword = "";
         private int _lastIndex;
 
         public MainForm(ApiCatalogService catalog)
@@ -47,8 +52,33 @@ namespace AIShop.Client
             Controls.Add(menu);
             MainMenuStrip = menu;
 
+            _category = new ComboBox
+            {
+                Left = 12,
+                Top = menu.Height + 8,
+                Width = 180,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                TabIndex = 0
+            };
+            _category.Items.Add(SoftwareCategories.All);
+            foreach (var category in SoftwareCategories.Values)
+            {
+                _category.Items.Add(category);
+            }
+            _category.SelectedIndex = 0;
+            _category.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    LoadSelectedCategory();
+                    e.Handled = true;
+                }
+            };
+            Controls.Add(_category);
+
             _list = FormTools.ListBox();
-            _list.Top = menu.Height;
+            _list.Dock = DockStyle.None;
+            _list.TabIndex = 1;
             _list.ContextMenuStrip = _softwareMenu;
             _list.DoubleClick += async (s, e) => await RunPrimaryActionAsync();
             _list.KeyDown += async (s, e) =>
@@ -67,8 +97,38 @@ namespace AIShop.Client
             Controls.Add(_list);
             _list.BringToFront();
 
+            _search = new TextBox
+            {
+                Top = menu.Height + 8,
+                Width = 360,
+                Height = 24,
+                TabIndex = 2
+            };
+            _search.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    SearchCurrentCategory();
+                    e.Handled = true;
+                }
+            };
+            Controls.Add(_search);
+
+            _searchButton = new Button
+            {
+                Text = "搜索",
+                Top = menu.Height + 6,
+                Width = 80,
+                Height = 28,
+                TabIndex = 3
+            };
+            _searchButton.Click += (s, e) => SearchCurrentCategory();
+            Controls.Add(_searchButton);
+
             BuildContextMenu();
             BuildTray();
+            LayoutMainControls();
+            Resize += (s, e) => LayoutMainControls();
             Load += async (s, e) =>
             {
                 await _catalog.RefreshCurrentUserAsync();
@@ -167,22 +227,86 @@ namespace AIShop.Client
             try
             {
                 _items = await _catalog.GetPublishedSoftwareAsync();
-                _list.Items.Clear();
-                foreach (var item in _items)
-                {
-                    _list.Items.Add(new DisplayItem<SoftwareItem>(item, item.ToMainListText()));
-                }
-
-                if (_list.Items.Count > 0)
-                {
-                    _list.SelectedIndex = Math.Min(_lastIndex, _list.Items.Count - 1);
-                }
+                PopulateSoftwareList();
             }
             catch (Exception ex)
             {
                 AppLog.Error("刷新软件列表失败", ex);
                 FormTools.ShowError(ex);
             }
+        }
+
+        private void PopulateSoftwareList()
+        {
+            _list.Items.Clear();
+            foreach (var item in FilterSoftware(_items))
+            {
+                _list.Items.Add(new DisplayItem<SoftwareItem>(item, item.ToMainListText()));
+            }
+
+            if (_list.Items.Count > 0)
+            {
+                _list.SelectedIndex = Math.Min(_lastIndex, _list.Items.Count - 1);
+            }
+        }
+
+        private IEnumerable<SoftwareItem> FilterSoftware(IEnumerable<SoftwareItem> items)
+        {
+            foreach (var item in items)
+            {
+                if (_loadedCategory != SoftwareCategories.All &&
+                    !string.Equals(NormalizeCategory(item.Category), _loadedCategory, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!MatchesKeyword(item, _searchKeyword))
+                {
+                    continue;
+                }
+
+                yield return item;
+            }
+        }
+
+        private static bool MatchesKeyword(SoftwareItem item, string keyword)
+        {
+            if (string.IsNullOrWhiteSpace(keyword))
+            {
+                return true;
+            }
+
+            return Contains(item.Name, keyword) ||
+                   Contains(item.Summary, keyword) ||
+                   Contains(item.Author, keyword) ||
+                   Contains(item.Id, keyword) ||
+                   Contains(item.Category, keyword);
+        }
+
+        private static bool Contains(string value, string keyword)
+        {
+            return (value ?? "").IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static string NormalizeCategory(string category)
+        {
+            return SoftwareCategories.IsValid(category) ? category : SoftwareCategories.Default;
+        }
+
+        private void LoadSelectedCategory()
+        {
+            _loadedCategory = _category.SelectedItem as string ?? SoftwareCategories.All;
+            _lastIndex = 0;
+            PopulateSoftwareList();
+            _list.Focus();
+        }
+
+        private void SearchCurrentCategory()
+        {
+            _searchKeyword = (_search.Text ?? "").Trim();
+            _lastIndex = 0;
+            PopulateSoftwareList();
+            _list.Focus();
         }
 
         private Task RunPrimaryActionAsync()
@@ -364,6 +488,21 @@ namespace AIShop.Client
                 _list.SelectedIndex = Math.Min(_lastIndex, _list.Items.Count - 1);
             }
             _list.Focus();
+        }
+
+        private void LayoutMainControls()
+        {
+            var menuHeight = MainMenuStrip != null ? MainMenuStrip.Height : 24;
+            var top = menuHeight + 8;
+            var padding = 12;
+            var buttonWidth = 80;
+            var categoryWidth = 180;
+            var searchWidth = Math.Max(200, ClientSize.Width - padding * 2 - categoryWidth - 12 - buttonWidth - 12);
+
+            _category.SetBounds(padding, top, categoryWidth, 24);
+            _search.SetBounds(padding + categoryWidth + 12, top, searchWidth, 24);
+            _searchButton.SetBounds(padding + categoryWidth + 12 + searchWidth + 12, top - 1, buttonWidth, 28);
+            _list.SetBounds(padding, top + 38, ClientSize.Width - padding * 2, ClientSize.Height - (top + 50) - padding);
         }
 
         private void OnMainFormClosing(object sender, FormClosingEventArgs e)

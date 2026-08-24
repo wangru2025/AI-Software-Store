@@ -43,6 +43,7 @@ func (s *Store) Migrate() error {
 			id text primary key,
 			owner_user_id bigint not null references users(id) on delete cascade,
 			name text not null,
+			category text not null default '应用软件',
 			summary text not null,
 			created_at timestamptz not null default now(),
 			deleted_at timestamptz
@@ -92,6 +93,8 @@ func (s *Store) Migrate() error {
 		}
 	}
 	_, _ = s.db.Exec(`alter table software add column if not exists deleted_at timestamptz`)
+	_, _ = s.db.Exec(`alter table software add column if not exists category text not null default '应用软件'`)
+	_, _ = s.db.Exec(`update software set category='应用软件' where category is null or btrim(category)=''`)
 	return nil
 }
 
@@ -149,7 +152,7 @@ func (s *Store) ChangePassword(ctx context.Context, user User, oldPassword, newP
 
 func (s *Store) ListPublishedSoftware(ctx context.Context) ([]SoftwareItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		select sw.id, sw.name, latest.version, u.username, sw.summary, coalesce(latest.published_at, latest.created_at), stats.download_count, latest.sha256, latest.status
+		select sw.id, sw.name, latest.version, u.username, coalesce(nullif(sw.category, ''), '应用软件'), sw.summary, coalesce(latest.published_at, latest.created_at), stats.download_count, latest.sha256, latest.status
 		from software sw
 		join users u on u.id=sw.owner_user_id
 		join lateral (
@@ -172,7 +175,7 @@ func (s *Store) ListPublishedSoftware(ctx context.Context) ([]SoftwareItem, erro
 	list := []SoftwareItem{}
 	for rows.Next() {
 		var item SoftwareItem
-		if err := rows.Scan(&item.Id, &item.Name, &item.Version, &item.Author, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.PackageSha256, &item.Status); err != nil {
+		if err := rows.Scan(&item.Id, &item.Name, &item.Version, &item.Author, &item.Category, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.PackageSha256, &item.Status); err != nil {
 			return nil, err
 		}
 		s.fillRatingStats(ctx, &item)
@@ -185,7 +188,7 @@ func (s *Store) ListPublishedSoftware(ctx context.Context) ([]SoftwareItem, erro
 func (s *Store) Software(ctx context.Context, id string) (SoftwareItem, error) {
 	var item SoftwareItem
 	err := s.db.QueryRowContext(ctx, `
-		select sw.id, sw.name, latest.version, u.username, sw.summary, coalesce(latest.published_at, latest.created_at), stats.download_count, latest.sha256, latest.status
+		select sw.id, sw.name, latest.version, u.username, coalesce(nullif(sw.category, ''), '应用软件'), sw.summary, coalesce(latest.published_at, latest.created_at), stats.download_count, latest.sha256, latest.status
 		from software sw
 		join users u on u.id=sw.owner_user_id
 		join lateral (
@@ -196,7 +199,7 @@ func (s *Store) Software(ctx context.Context, id string) (SoftwareItem, error) {
 			from software_versions v
 			where v.software_id=sw.id
 		) stats on true
-		where sw.id=$1 and sw.deleted_at is null`, id).Scan(&item.Id, &item.Name, &item.Version, &item.Author, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.PackageSha256, &item.Status)
+		where sw.id=$1 and sw.deleted_at is null`, id).Scan(&item.Id, &item.Name, &item.Version, &item.Author, &item.Category, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.PackageSha256, &item.Status)
 	if err != nil {
 		return item, err
 	}
@@ -224,7 +227,7 @@ func (s *Store) Changelogs(ctx context.Context, softwareID string) ([]ChangelogE
 
 func (s *Store) MySubmissions(ctx context.Context, userID int64) ([]SubmissionItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		select sw.id, sw.name, v.version, sw.summary, coalesce(v.published_at, v.created_at), stats.download_count, v.status
+		select sw.id, sw.name, v.version, coalesce(nullif(sw.category, ''), '应用软件'), sw.summary, coalesce(v.published_at, v.created_at), stats.download_count, v.status
 		from software sw
 		join lateral (
 			select * from software_versions v
@@ -246,7 +249,7 @@ func (s *Store) MySubmissions(ctx context.Context, userID int64) ([]SubmissionIt
 	list := []SubmissionItem{}
 	for rows.Next() {
 		var item SubmissionItem
-		if err := rows.Scan(&item.SoftwareId, &item.Name, &item.Version, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.Status); err != nil {
+		if err := rows.Scan(&item.SoftwareId, &item.Name, &item.Version, &item.Category, &item.Summary, &item.PublishedAt, &item.DownloadCount, &item.Status); err != nil {
 			return nil, err
 		}
 		var avg sql.NullFloat64
@@ -305,10 +308,10 @@ func (s *Store) SaveSubmission(ctx context.Context, userID int64, manifest Manif
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		insert into software(id, owner_user_id, name, summary)
-		values($1,$2,$3,$4)
-		on conflict(id) do update set name=excluded.name, summary=excluded.summary, deleted_at=null`,
-		manifest.ID, userID, manifest.Name, manifest.Summary)
+		insert into software(id, owner_user_id, name, category, summary)
+		values($1,$2,$3,$4,$5)
+		on conflict(id) do update set name=excluded.name, category=excluded.category, summary=excluded.summary, deleted_at=null`,
+		manifest.ID, userID, manifest.Name, categoryOrDefault(manifest.Category), manifest.Summary)
 	if err != nil {
 		return err
 	}
@@ -409,6 +412,14 @@ func submissionPublishedAt(existingSoftware bool) any {
 	return nil
 }
 
+func categoryOrDefault(category string) string {
+	category = strings.TrimSpace(category)
+	if category == "" {
+		return "应用软件"
+	}
+	return category
+}
+
 func compareVersion(left, right string) int {
 	leftParts := strings.Split(left, ".")
 	rightParts := strings.Split(right, ".")
@@ -455,8 +466,8 @@ func (s *Store) ToggleSubmissionStatus(ctx context.Context, userID int64, softwa
 	return err
 }
 
-func (s *Store) UpdateSoftwareInfo(ctx context.Context, userID int64, softwareID, name, summary string) error {
-	_, err := s.db.ExecContext(ctx, `update software set name=$1, summary=$2 where id=$3 and owner_user_id=$4 and deleted_at is null`, name, summary, softwareID, userID)
+func (s *Store) UpdateSoftwareInfo(ctx context.Context, userID int64, softwareID, name, summary, category string) error {
+	_, err := s.db.ExecContext(ctx, `update software set name=$1, summary=$2, category=$3 where id=$4 and owner_user_id=$5 and deleted_at is null`, name, summary, categoryOrDefault(category), softwareID, userID)
 	return err
 }
 

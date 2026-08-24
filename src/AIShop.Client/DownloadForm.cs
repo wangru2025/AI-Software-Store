@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -20,6 +21,8 @@ namespace AIShop.Client
         private readonly Button _cancel = new Button();
         private readonly System.Windows.Forms.Timer _elapsedTimer = new System.Windows.Forms.Timer();
         private readonly BackgroundTask _task;
+        private static readonly object WindowsSyncRoot = new object();
+        private static readonly Dictionary<string, DownloadForm> WindowsByTaskId = new Dictionary<string, DownloadForm>();
 
         private DownloadForm(BackgroundTask task)
         {
@@ -85,7 +88,18 @@ namespace AIShop.Client
             };
 
             _task.Changed += OnTaskChanged;
-            FormClosed += (s, e) => _task.Changed -= OnTaskChanged;
+            FormClosed += (s, e) =>
+            {
+                _task.Changed -= OnTaskChanged;
+                lock (WindowsSyncRoot)
+                {
+                    DownloadForm current;
+                    if (WindowsByTaskId.TryGetValue(_task.Id, out current) && ReferenceEquals(current, this))
+                    {
+                        WindowsByTaskId.Remove(_task.Id);
+                    }
+                }
+            };
             Load += (s, e) =>
             {
                 UpdateProgress(_task.Snapshot);
@@ -114,7 +128,7 @@ namespace AIShop.Client
                 backgroundTask.WaitIfPaused(token);
                 await ElevatedInstallWorker.InstallAsync(zip, progress, token).ConfigureAwait(false);
             });
-            return new DownloadForm(task);
+            return ForTask(task);
         }
 
         public static DownloadForm ForUninstall(SoftwareItem item)
@@ -124,7 +138,7 @@ namespace AIShop.Client
                 var installer = new PackageInstaller();
                 await installer.UninstallAsync(item, progress, token).ConfigureAwait(false);
             });
-            return new DownloadForm(task);
+            return ForTask(task);
         }
 
         public static DownloadForm ForClientUpdate(ClientUpdateInfo update)
@@ -142,12 +156,42 @@ namespace AIShop.Client
                 progress.Report(new ProgressSnapshot { Percent = 100, Message = "正在启动更新程序", IsCompleted = true });
                 Application.Exit();
             });
-            return new DownloadForm(task);
+            return ForTask(task);
         }
 
         public static DownloadForm ForTask(BackgroundTask task)
         {
-            return new DownloadForm(task);
+            lock (WindowsSyncRoot)
+            {
+                DownloadForm existing;
+                if (WindowsByTaskId.TryGetValue(task.Id, out existing) && !existing.IsDisposed)
+                {
+                    return existing;
+                }
+
+                var form = new DownloadForm(task);
+                WindowsByTaskId[task.Id] = form;
+                return form;
+            }
+        }
+
+        public static void ShowTask(BackgroundTask task, IWin32Window owner)
+        {
+            var form = ForTask(task);
+            if (!form.Visible)
+            {
+                form.Show(owner);
+            }
+            else
+            {
+                form.Show();
+            }
+
+            if (form.WindowState == FormWindowState.Minimized)
+            {
+                form.WindowState = FormWindowState.Normal;
+            }
+            form.Activate();
         }
 
         private void OnTaskChanged(object sender, EventArgs e)
