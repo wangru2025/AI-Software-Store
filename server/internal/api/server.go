@@ -522,11 +522,20 @@ func validatePackage(zipPath string) (store.Manifest, string, error) {
 	if manifest.Install == "" {
 		manifest.Install = "install.ps1"
 	}
+	if !isRootFile(manifest.Install) {
+		return store.Manifest{}, "", errors.New("安装脚本必须位于 zip 根目录。")
+	}
 	if files[manifest.Install] == nil {
 		return store.Manifest{}, "", errors.New("投稿包必须包含 install.ps1。")
 	}
+	if manifest.Uninstall != "" && !isRootFile(manifest.Uninstall) {
+		return store.Manifest{}, "", errors.New("卸载脚本必须位于 zip 根目录。")
+	}
 	if manifest.Uninstall != "" && files[manifest.Uninstall] == nil {
 		return store.Manifest{}, "", errors.New("声明了 uninstall 脚本，但文件不存在。")
+	}
+	if manifest.Update != "" && !isRootFile(manifest.Update) {
+		return store.Manifest{}, "", errors.New("更新脚本必须位于 zip 根目录。")
 	}
 	if manifest.Update != "" && files[manifest.Update] == nil {
 		return store.Manifest{}, "", errors.New("声明了 update 脚本，但文件不存在。")
@@ -589,6 +598,10 @@ func readTextFromZip(file *zip.File, limit int64) (string, error) {
 	defer reader.Close()
 	data, err := io.ReadAll(io.LimitReader(reader, limit))
 	return string(data), err
+}
+
+func isRootFile(value string) bool {
+	return value != "" && !strings.Contains(value, "/") && !strings.Contains(value, "\\")
 }
 
 func validateAccount(w http.ResponseWriter, username, nickname, password string) bool {

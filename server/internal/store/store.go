@@ -10,6 +10,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
@@ -214,7 +216,12 @@ func (s *Store) MySubmissions(ctx context.Context, userID int64) ([]SubmissionIt
 	rows, err := s.db.QueryContext(ctx, `
 		select sw.id, sw.name, v.version, sw.summary, coalesce(v.published_at, v.created_at), v.download_count, v.status
 		from software sw
-		join software_versions v on v.software_id=sw.id
+		join lateral (
+			select * from software_versions v
+			where v.software_id=sw.id
+			order by coalesce(v.published_at, v.created_at) desc, v.id desc
+			limit 1
+		) v on true
 		where sw.owner_user_id=$1 and sw.deleted_at is null
 		order by coalesce(v.published_at, v.created_at) desc`, userID)
 	if err != nil {
@@ -253,6 +260,31 @@ func (s *Store) SaveSubmission(ctx context.Context, userID int64, manifest Manif
 	if err == nil && ownerID != userID {
 		return errors.New("这个软件 id 已被其它投稿者使用")
 	}
+	existingSoftware := err == nil
+
+	var nameOwnerID int64
+	err = tx.QueryRowContext(ctx, `select owner_user_id from software where lower(name)=lower($1) and deleted_at is null limit 1`, manifest.Name).Scan(&nameOwnerID)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil && nameOwnerID != userID {
+		return errors.New("这个软件名称已被其它投稿者使用")
+	}
+
+	if existingSoftware {
+		var latestVersion string
+		err = tx.QueryRowContext(ctx, `
+			select version from software_versions
+			where software_id=$1
+			order by coalesce(published_at, created_at) desc, id desc
+			limit 1`, manifest.ID).Scan(&latestVersion)
+		if err != nil {
+			return err
+		}
+		if compareVersion(manifest.Version, latestVersion) <= 0 {
+			return errors.New("新版本号必须高于当前版本。")
+		}
+	}
 
 	_, err = tx.ExecContext(ctx, `
 		insert into software(id, owner_user_id, name, summary)
@@ -263,9 +295,9 @@ func (s *Store) SaveSubmission(ctx context.Context, userID int64, manifest Manif
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
-		insert into software_versions(software_id, version, manifest_json, package_path, sha256, changelog, status)
-		values($1,$2,$3,$4,$5,$6,'Draft')`,
-		manifest.ID, manifest.Version, string(manifestJSON), packagePath, sha256, changelog)
+		insert into software_versions(software_id, version, manifest_json, package_path, sha256, changelog, status, published_at)
+		values($1,$2,$3,$4,$5,$6,$7,$8)`,
+		manifest.ID, manifest.Version, string(manifestJSON), packagePath, sha256, changelog, submissionStatus(existingSoftware), submissionPublishedAt(existingSoftware))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "software_versions_software_id_version_key" {
@@ -343,6 +375,56 @@ func removeEmptyParents(dir string, depth int) {
 		}
 		dir = filepath.Dir(dir)
 	}
+}
+
+func submissionStatus(existingSoftware bool) string {
+	if existingSoftware {
+		return "Published"
+	}
+	return "Draft"
+}
+
+func submissionPublishedAt(existingSoftware bool) any {
+	if existingSoftware {
+		return time.Now()
+	}
+	return nil
+}
+
+func compareVersion(left, right string) int {
+	leftParts := strings.Split(left, ".")
+	rightParts := strings.Split(right, ".")
+	max := len(leftParts)
+	if len(rightParts) > max {
+		max = len(rightParts)
+	}
+	for i := 0; i < max; i++ {
+		var l, r int
+		if i < len(leftParts) {
+			l = atoiVersionPart(leftParts[i])
+		}
+		if i < len(rightParts) {
+			r = atoiVersionPart(rightParts[i])
+		}
+		if l < r {
+			return -1
+		}
+		if l > r {
+			return 1
+		}
+	}
+	return 0
+}
+
+func atoiVersionPart(value string) int {
+	n := 0
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			break
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
 }
 
 func (s *Store) ToggleSubmissionStatus(ctx context.Context, userID int64, softwareID string) error {

@@ -2,10 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using AIShop.Shared;
@@ -169,6 +172,8 @@ namespace AIShop.Client.Services
             }
 
             var watch = Stopwatch.StartNew();
+            progress?.Report(new ProgressSnapshot { Percent = 0, Message = "正在本地校验投稿包" });
+            await ValidateSubmissionPackageAsync(zipPath).ConfigureAwait(false);
             progress?.Report(new ProgressSnapshot { Percent = 0, Message = "正在准备上传" });
 
             using (var content = new MultipartFormDataContent())
@@ -216,6 +221,71 @@ namespace AIShop.Client.Services
             }
 
             progress?.Report(new ProgressSnapshot { Percent = 100, Message = "上传完成", IsCompleted = true });
+        }
+
+        private async Task ValidateSubmissionPackageAsync(string zipPath)
+        {
+            PackageManifest manifest;
+            string changelog;
+            using (var archive = ZipFile.OpenRead(zipPath))
+            {
+                var entries = archive.Entries.ToDictionary(x => x.FullName.Replace('\\', '/'), StringComparer.OrdinalIgnoreCase);
+                if (!entries.ContainsKey("aishop.json"))
+                {
+                    throw new ApiException("投稿包根目录必须包含 aishop.json。");
+                }
+                if (!entries.ContainsKey("CHANGELOG.txt"))
+                {
+                    throw new ApiException("投稿包根目录必须包含 CHANGELOG.txt。");
+                }
+
+                manifest = ReadJsonEntry<PackageManifest>(entries["aishop.json"]);
+                if (manifest == null ||
+                    string.IsNullOrWhiteSpace(manifest.id) ||
+                    string.IsNullOrWhiteSpace(manifest.name) ||
+                    string.IsNullOrWhiteSpace(manifest.version) ||
+                    string.IsNullOrWhiteSpace(manifest.summary))
+                {
+                    throw new ApiException("aishop.json 必须填写 id、name、version、summary。");
+                }
+
+                var install = string.IsNullOrWhiteSpace(manifest.install) ? "install.ps1" : manifest.install;
+                RequireRootScript(entries, install, "安装脚本");
+                if (!string.IsNullOrWhiteSpace(manifest.uninstall))
+                {
+                    RequireRootScript(entries, manifest.uninstall, "卸载脚本");
+                }
+                if (!string.IsNullOrWhiteSpace(manifest.update))
+                {
+                    RequireRootScript(entries, manifest.update, "更新脚本");
+                }
+
+                changelog = ReadTextEntry(entries["CHANGELOG.txt"]);
+            }
+
+            if (!ChangelogContainsVersion(changelog, manifest.version))
+            {
+                throw new ApiException("CHANGELOG.txt 必须包含当前版本，格式为 === 版本号 | 日期 ===。");
+            }
+
+            IReadOnlyList<SubmissionItem> mine = IsLoggedIn ? await GetMySubmissionsAsync().ConfigureAwait(false) : new List<SubmissionItem>();
+            var published = await GetPublishedSoftwareAsync().ConfigureAwait(false);
+            var mySoftware = mine.FirstOrDefault(x => Same(x.SoftwareId, manifest.id));
+
+            foreach (var item in published)
+            {
+                var sameId = Same(item.Id, manifest.id);
+                var sameName = Same(item.Name, manifest.name);
+                if ((sameId || sameName) && !IsDeveloper(item))
+                {
+                    throw new ApiException(sameId ? "这个软件 id 已被其它投稿者使用。" : "这个软件名称已被其它投稿者使用。");
+                }
+            }
+
+            if (mySoftware != null && CompareVersion(manifest.version, mySoftware.Version) <= 0)
+            {
+                throw new ApiException("新版本号必须高于当前版本。");
+            }
         }
 
         public Task<ClientUpdateInfo> CheckClientUpdateAsync(string currentVersion)
@@ -314,6 +384,87 @@ namespace AIShop.Client.Services
 
             return Math.Max(0, Math.Min(100, (int)(transferred * 100 / total)));
         }
+
+        private static void RequireRootScript(IDictionary<string, ZipArchiveEntry> entries, string path, string label)
+        {
+            if (string.IsNullOrWhiteSpace(path) || path.Contains("/") || path.Contains("\\"))
+            {
+                throw new ApiException(label + "必须位于 zip 根目录。");
+            }
+            if (!entries.ContainsKey(path))
+            {
+                throw new ApiException("投稿包根目录缺少" + label + "：" + path);
+            }
+        }
+
+        private static T ReadJsonEntry<T>(ZipArchiveEntry entry)
+        {
+            using (var stream = entry.Open())
+            using (var reader = new StreamReader(stream, Encoding.UTF8, true))
+            {
+                return JsonConvert.DeserializeObject<T>(reader.ReadToEnd());
+            }
+        }
+
+        private static string ReadTextEntry(ZipArchiveEntry entry)
+        {
+            using (var stream = entry.Open())
+            using (var reader = new StreamReader(stream, Encoding.UTF8, true))
+            {
+                return reader.ReadToEnd();
+            }
+        }
+
+        private static bool ChangelogContainsVersion(string text, string version)
+        {
+            foreach (Match match in ChangelogHeader.Matches(text ?? ""))
+            {
+                if (Same(match.Groups[1].Value.Trim(), version) &&
+                    DateTime.TryParseExact(match.Groups[2].Value, "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out _))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static int CompareVersion(string left, string right)
+        {
+            var leftParts = (left ?? "").Split('.');
+            var rightParts = (right ?? "").Split('.');
+            var max = Math.Max(leftParts.Length, rightParts.Length);
+            for (var i = 0; i < max; i++)
+            {
+                var l = i < leftParts.Length ? VersionPart(leftParts[i]) : 0;
+                var r = i < rightParts.Length ? VersionPart(rightParts[i]) : 0;
+                if (l != r)
+                {
+                    return l.CompareTo(r);
+                }
+            }
+            return 0;
+        }
+
+        private static int VersionPart(string value)
+        {
+            var result = 0;
+            foreach (var ch in value ?? "")
+            {
+                if (ch < '0' || ch > '9')
+                {
+                    break;
+                }
+                result = result * 10 + ch - '0';
+            }
+            return result;
+        }
+
+        private static bool Same(string left, string right)
+        {
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static readonly Regex ChangelogHeader = new Regex(@"(?m)^===\s*([^\|]+?)\s*\|\s*(\d{4}-\d{2}-\d{2})\s*===$", RegexOptions.Compiled);
 
         private sealed class ErrorResponse
         {
