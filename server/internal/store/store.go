@@ -594,7 +594,6 @@ func (s *Store) ToggleSubmissionStatus(ctx context.Context, userID int64, softwa
 func (s *Store) UpdateSoftwareInfo(ctx context.Context, userID int64, softwareID, name, summary, category string) error {
 	name = strings.TrimSpace(name)
 	summary = strings.TrimSpace(summary)
-	category = categoryOrDefault(category)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -605,8 +604,9 @@ func (s *Store) UpdateSoftwareInfo(ctx context.Context, userID int64, softwareID
 	var versionID int64
 	var manifestRaw []byte
 	var packagePath string
+	var currentCategory string
 	err = tx.QueryRowContext(ctx, `
-		select v.id, v.manifest_json, v.package_path
+		select v.id, v.manifest_json, v.package_path, coalesce(nullif(sw.category, ''), '应用软件')
 		from software sw
 		join lateral (
 			select *
@@ -616,9 +616,14 @@ func (s *Store) UpdateSoftwareInfo(ctx context.Context, userID int64, softwareID
 			limit 1
 		) v on true
 		where sw.id=$1 and sw.owner_user_id=$2 and sw.deleted_at is null
-		for update of sw`, softwareID, userID).Scan(&versionID, &manifestRaw, &packagePath)
+		for update of sw`, softwareID, userID).Scan(&versionID, &manifestRaw, &packagePath, &currentCategory)
 	if err != nil {
 		return err
+	}
+	if strings.TrimSpace(category) == "" {
+		category = categoryOrDefault(currentCategory)
+	} else {
+		category = categoryOrDefault(category)
 	}
 
 	var manifest Manifest

@@ -326,7 +326,7 @@ func (s *Server) handleSubmissionAction(w http.ResponseWriter, r *http.Request, 
 			fail(w, http.StatusBadRequest, "软件名称和简介不能为空。")
 			return
 		}
-		if !validCategory(req.Category) {
+		if strings.TrimSpace(req.Category) != "" && !validCategory(req.Category) {
 			fail(w, http.StatusBadRequest, "软件分类不正确。")
 			return
 		}
