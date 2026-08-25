@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
+using AIShop.Client.Services;
 
 namespace AIShop.Client.UI
 {
@@ -82,6 +83,7 @@ namespace AIShop.Client.UI
 
         public static void ShowError(Exception exception)
         {
+            AppLog.Error("操作失败", exception);
             MessageBox.Show(exception.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }

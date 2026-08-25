@@ -89,6 +89,13 @@ func (s *Store) Migrate() error {
 			version text not null,
 			created_at timestamptz not null default now()
 		)`,
+		`create table if not exists client_error_reports (
+			id text primary key,
+			user_id bigint references users(id) on delete set null,
+			message text not null default '',
+			package_path text not null,
+			created_at timestamptz not null default now()
+		)`,
 	}
 	for _, query := range queries {
 		if _, err := s.db.Exec(query); err != nil {
@@ -698,6 +705,18 @@ func (s *Store) PackageForDownload(ctx context.Context, softwareID, version stri
 		where target.software_id=$1 and target.version=$2`, softwareID, version)
 	_, _ = s.db.ExecContext(ctx, `insert into download_records(software_id, version) values($1,$2)`, softwareID, version)
 	return path, nil
+}
+
+func (s *Store) SaveClientErrorReport(ctx context.Context, userID *int64, message, packagePath string) error {
+	var user any
+	if userID != nil {
+		user = *userID
+	}
+	_, err := s.db.ExecContext(ctx, `
+		insert into client_error_reports(id,user_id,message,package_path)
+		values($1,$2,$3,$4)`,
+		randomID(), user, strings.TrimSpace(message), packagePath)
+	return err
 }
 
 func (s *Store) Ratings(ctx context.Context, softwareID string) ([]RatingItem, error) {

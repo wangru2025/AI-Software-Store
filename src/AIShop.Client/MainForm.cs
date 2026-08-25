@@ -27,21 +27,31 @@ namespace AIShop.Client
         private string _loadedCategory = SoftwareCategories.All;
         private string _searchKeyword = "";
         private int _lastIndex;
+        private readonly bool _startHiddenToTray;
 
-        public MainForm(ApiCatalogService catalog)
+        public MainForm(ApiCatalogService catalog, bool startHiddenToTray = false)
         {
             _catalog = catalog;
+            _startHiddenToTray = startHiddenToTray;
             Text = "AI 软件商店";
             Width = 980;
             Height = 600;
             StartPosition = FormStartPosition.CenterScreen;
             KeyPreview = true;
+            if (_startHiddenToTray)
+            {
+                Opacity = 0;
+                ShowInTaskbar = false;
+                StartPosition = FormStartPosition.Manual;
+                Location = new Point(-32000, -32000);
+            }
 
             var menu = new MenuStrip();
             var file = new ToolStripMenuItem("文件");
             file.DropDownItems.Add("投稿软件", null, async (s, e) => await OpenSubmissionAsync());
             file.DropDownItems.Add("个人中心", null, async (s, e) => await OpenPersonalCenterAsync());
             file.DropDownItems.Add("任务管理", null, (s, e) => OpenTaskManager());
+            file.DropDownItems.Add("设置", null, (s, e) => OpenSettings());
             file.DropDownItems.Add("隐藏到托盘", null, (s, e) => HideToTray());
             file.DropDownItems.Add("退出", null, (s, e) => Close());
             var help = new ToolStripMenuItem("帮助");
@@ -137,6 +147,14 @@ namespace AIShop.Client
             {
                 await _catalog.RefreshCurrentUserAsync();
                 await RefreshSoftwareAsync();
+                BeginInvoke((Action)(async () => await CheckUpdateAsync(true)));
+            };
+            Shown += (s, e) =>
+            {
+                if (_startHiddenToTray)
+                {
+                    HideToTray();
+                }
             };
             Resize += (s, e) =>
             {
@@ -380,6 +398,14 @@ namespace AIShop.Client
             }
         }
 
+        private void OpenSettings()
+        {
+            using (var form = new SettingsForm())
+            {
+                form.ShowDialog(this);
+            }
+        }
+
         private async Task<bool> EnsureLoggedInAsync()
         {
             if (_catalog.IsLoggedIn)
@@ -397,13 +423,21 @@ namespace AIShop.Client
 
         private async Task CheckUpdateAsync()
         {
+            await CheckUpdateAsync(false);
+        }
+
+        private async Task CheckUpdateAsync(bool silentWhenCurrent)
+        {
             try
             {
                 var currentVersion = ConfigurationManager.AppSettings["ClientVersion"] ?? "0.0.0";
                 var update = await _catalog.CheckClientUpdateAsync(currentVersion);
                 if (update == null || !update.HasUpdate)
                 {
-                    MessageBox.Show("当前已是最新版本。", "检查更新");
+                    if (!silentWhenCurrent)
+                    {
+                        MessageBox.Show("当前已是最新版本。", "检查更新");
+                    }
                     return;
                 }
 
@@ -416,7 +450,10 @@ namespace AIShop.Client
             catch (Exception ex)
             {
                 AppLog.Error("检查客户端更新失败", ex);
-                FormTools.ShowError(ex);
+                if (!silentWhenCurrent)
+                {
+                    FormTools.ShowError(ex);
+                }
             }
         }
 
@@ -557,6 +594,8 @@ namespace AIShop.Client
 
         public void RestoreFromTray()
         {
+            Opacity = 1;
+            ShowInTaskbar = true;
             Show();
             WindowState = FormWindowState.Normal;
             Activate();

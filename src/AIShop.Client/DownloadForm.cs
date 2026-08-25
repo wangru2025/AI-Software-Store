@@ -120,7 +120,7 @@ namespace AIShop.Client
             {
                 var downloader = new ManagedDownloader();
                 backgroundTask.Downloader = downloader;
-                var dir = Path.Combine(Path.GetTempPath(), "AI软件商店", item.Id, item.Version);
+                var dir = Path.Combine(AppPaths.TempRoot(), item.Id, item.Version);
                 Directory.CreateDirectory(dir);
                 var zip = Path.Combine(dir, item.Id + "-" + item.Version + ".zip");
                 var url = catalog.BuildDownloadUrl(item.Id, item.Version);
@@ -147,7 +147,7 @@ namespace AIShop.Client
             {
                 var downloader = new ManagedDownloader();
                 backgroundTask.Downloader = downloader;
-                var dir = Path.Combine(Path.GetTempPath(), "AI软件商店", "client-update");
+                var dir = Path.Combine(AppPaths.TempRoot(), "client-update");
                 Directory.CreateDirectory(dir);
                 var file = Path.Combine(dir, "AIShop.Client.Update.zip");
                 await downloader.DownloadAsync(update.DownloadUrl, file, update.Sha256, progress, token).ConfigureAwait(false);
@@ -371,7 +371,7 @@ namespace AIShop.Client
                 throw new FileNotFoundException("找不到更新器。", updater);
             }
 
-            var tempUpdaterDir = Path.Combine(Path.GetTempPath(), "AI软件商店", "updater-runner");
+            var tempUpdaterDir = Path.Combine(AppPaths.TempRoot(), "updater-runner");
             Directory.CreateDirectory(tempUpdaterDir);
             var tempUpdater = Path.Combine(tempUpdaterDir, "AI软件商店.Updater.exe");
             File.Copy(updater, tempUpdater, true);

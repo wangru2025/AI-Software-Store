@@ -6,10 +6,9 @@ namespace AIShop.Client.Services
     public static class AppLog
     {
         private static readonly object SyncRoot = new object();
-        private static readonly string BaseDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "AI软件商店",
-            "Logs");
+        private static readonly string BaseDir = AppPaths.LogsDir;
+
+        public static event Action<string, Exception> ErrorWritten;
 
         public static void Client(string message)
         {
@@ -34,6 +33,7 @@ namespace AIShop.Client.Services
         public static void Error(string message, Exception exception)
         {
             Write("error.log", message, exception);
+            ErrorWritten?.Invoke(message, exception);
         }
 
         private static void Write(string fileName, string message, Exception exception)

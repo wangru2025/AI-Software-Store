@@ -49,6 +49,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/software", s.handleSoftwareList)
 	mux.HandleFunc("/api/software/", s.handleSoftwarePath)
 	mux.HandleFunc("/api/ratings/", s.handleRatingPath)
+	mux.HandleFunc("/api/client/logs", s.handleClientLogs)
 	mux.HandleFunc("/api/client/update", s.handleClientUpdate)
 	return cors(mux)
 }
@@ -431,6 +432,71 @@ func (s *Server) handleClientUpdate(w http.ResponseWriter, r *http.Request) {
 		"DownloadUrl": s.cfg.ClientUpdateURL,
 		"Sha256":      s.cfg.ClientUpdateHash,
 	})
+}
+
+func (s *Server) handleClientLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		fail(w, http.StatusBadRequest, "日志包过大或格式不正确。")
+		return
+	}
+	file, header, err := r.FormFile("logs")
+	if err != nil {
+		fail(w, http.StatusBadRequest, "缺少日志包。")
+		return
+	}
+	defer file.Close()
+	if !strings.EqualFold(filepath.Ext(header.Filename), ".zip") {
+		fail(w, http.StatusBadRequest, "日志包必须是 zip 文件。")
+		return
+	}
+
+	targetDir := filepath.Join(s.cfg.DataDir, "client-error-reports", time.Now().Format("20060102"))
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	target, err := os.CreateTemp(targetDir, "logs-*.zip")
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	targetPath := target.Name()
+	size, copyErr := io.Copy(target, io.LimitReader(file, 50<<20+1))
+	closeErr := target.Close()
+	if copyErr != nil || closeErr != nil {
+		_ = os.Remove(targetPath)
+		fail(w, http.StatusInternalServerError, "保存日志包失败。")
+		return
+	}
+	if size > 50<<20 {
+		_ = os.Remove(targetPath)
+		fail(w, http.StatusBadRequest, "日志包不能超过 50MB。")
+		return
+	}
+
+	var userID *int64
+	if user, ok := s.optionalAuthUser(r); ok {
+		userID = &user.ID
+	}
+	if err := s.store.SaveClientErrorReport(r.Context(), userID, r.FormValue("message"), targetPath); err != nil {
+		_ = os.Remove(targetPath)
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"Ok": true})
+}
+
+func (s *Server) optionalAuthUser(r *http.Request) (store.User, bool) {
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		return store.User{}, false
+	}
+	user, err := s.store.UserByToken(r.Context(), strings.TrimPrefix(header, "Bearer "))
+	return user, err == nil
 }
 
 func versionLess(current, latest string) bool {

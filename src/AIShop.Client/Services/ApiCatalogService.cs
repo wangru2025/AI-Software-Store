@@ -302,6 +302,41 @@ namespace AIShop.Client.Services
             return GetAsync<ClientUpdateInfo>("api/client/update?currentVersion=" + Uri.EscapeDataString(currentVersion ?? ""));
         }
 
+        public async Task UploadClientLogsAsync(string zipPath, string message)
+        {
+            if (string.IsNullOrWhiteSpace(zipPath) || !File.Exists(zipPath))
+            {
+                return;
+            }
+
+            using (var content = new MultipartFormDataContent())
+            using (var file = File.OpenRead(zipPath))
+            using (var fileContent = new StreamContent(file))
+            {
+                fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
+                content.Add(fileContent, "logs", Path.GetFileName(zipPath));
+                content.Add(new StringContent(message ?? "", Encoding.UTF8), "message");
+
+                using (var request = new HttpRequestMessage(HttpMethod.Post, "api/client/logs"))
+                {
+                    if (!string.IsNullOrWhiteSpace(_token))
+                    {
+                        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+                    }
+
+                    request.Content = content;
+                    using (var response = await _http.SendAsync(request).ConfigureAwait(false))
+                    {
+                        var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            throw new ApiException(ParseError(text, response.StatusCode));
+                        }
+                    }
+                }
+            }
+        }
+
         public string BuildDownloadUrl(string softwareId, string version)
         {
             return new Uri(_http.BaseAddress, "api/software/" + Uri.EscapeDataString(softwareId) + "/versions/" + Uri.EscapeDataString(version) + "/download").ToString();

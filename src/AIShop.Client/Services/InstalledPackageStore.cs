@@ -9,10 +9,7 @@ namespace AIShop.Client.Services
 {
     public sealed class InstalledPackageStore
     {
-        private readonly string _path = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "AI软件商店",
-            "installed.json");
+        private readonly string _path = Path.Combine(AppPaths.DataDir, "installed.json");
 
         public IReadOnlyList<InstalledPackage> ReadAll()
         {

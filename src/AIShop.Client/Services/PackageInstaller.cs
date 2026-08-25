@@ -17,7 +17,7 @@ namespace AIShop.Client.Services
 
         public async Task InstallAsync(string zipPath, IProgress<ProgressSnapshot> progress, CancellationToken cancellationToken)
         {
-            var workDir = Path.Combine(Path.GetTempPath(), "AI软件商店", "packages", Guid.NewGuid().ToString("N"));
+            var workDir = Path.Combine(AppPaths.TempRoot(), "packages", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(workDir);
 
             progress.Report(new ProgressSnapshot { Percent = 0, Message = "正在准备安装" });

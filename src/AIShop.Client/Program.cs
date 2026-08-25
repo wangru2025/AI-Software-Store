@@ -23,12 +23,14 @@ namespace AIShop.Client
             CertificatePinning.Configure(baseUrl, pinnedCertificateSha256);
             var authStore = new AuthStore();
             var catalog = new ApiCatalogService(baseUrl, authStore);
+            var settings = ClientSettingsStore.Load();
+            ErrorReportService.Configure(catalog);
             var persisted = authStore.Load();
             if (persisted != null)
             {
                 catalog.RestoreSession(persisted.Token, persisted.User);
             }
-            var mainForm = new MainForm(catalog);
+            var mainForm = new MainForm(catalog, settings.StartHiddenToTray);
             SingleInstanceManager instance;
             if (!SingleInstanceManager.TryCreate(mainForm, mainForm.RestoreFromTray, out instance))
             {
